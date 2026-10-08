@@ -1,0 +1,11 @@
+# generated from the user's own save and game files: never commit (the page embeds game art)
+mewtree.html
+mewtree.json
+_*.html
+
+# build output
+MewTree.exe
+build/
+dist/
+__pycache__/
+*.spec

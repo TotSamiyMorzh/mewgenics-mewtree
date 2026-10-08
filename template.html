@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="ru"><!-- the script sets the language; Russian is the markup default, English sits in data-en -->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Родословная колонии</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik+Mono+One&family=Rubik:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-screen pannable family graph (layers = generations) + detail panel (right / bottom sheet).
+   Look borrowed from the game's family tree screen: mauve wallpaper, paper name plates, thick ink outlines. Single dark theme by choice. */
+:root{
+  --bg:#241d21; --surface:#342b30; --surface2:#463a40; --line:#120d10;
+  --fg:#f3ebe6; --muted:#b9a9af; --accent:#f0c23b; --mut:#9fd35c;
+  --blood:#e2584d; --dead:#8a7d83; --common:#6cc3d8; --gone:#a79fc0;
+  --ink:#120d10; --paper:#e6dede; --wall:#2b2327; --thread:#b3a4aa;
+  --display:"Rubik Mono One","Arial Black",sans-serif;
+  --body:"Rubik",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;overflow:hidden}
+.app{display:flex;flex-direction:column;height:100%}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding-block:10px;padding-inline:16px;border-bottom:3px solid var(--ink);background:var(--surface);position:relative;z-index:2}
+h1{font-family:var(--display);font-size:17px;letter-spacing:.02em;margin:0;color:var(--accent)}
+.meta{font:11px var(--mono);color:var(--muted)}
+.titles{display:flex;flex-direction:column;gap:3px;min-width:0}
+.metarow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+#saveSel{font:700 12px var(--body);color:var(--ink);background:var(--paper);border:2px solid var(--ink);border-radius:8px;box-shadow:0 2px 0 var(--ink);padding:2px 6px;max-width:min(430px,100%);cursor:pointer}
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto;align-items:center}
+input#q{background:var(--bg);border:2px solid var(--ink);color:var(--fg);font:inherit;padding:6px 10px;border-radius:8px;width:240px;max-width:100%}
+button{background:var(--paper);color:var(--ink);border:2px solid var(--ink);box-shadow:0 2px 0 var(--ink);font:700 13px var(--body);padding:5px 11px;border-radius:8px;cursor:pointer}
+button:hover{background:#fff}
+button:active{transform:translateY(2px);box-shadow:none}
+button[aria-pressed="true"]{background:var(--accent)}
+.seg{display:inline-flex}
+.seg button{border-radius:0;margin-left:-2px}
+.seg button:first-child{border-radius:8px 0 0 8px;margin:0}
+.seg button:last-child{border-radius:0 8px 8px 0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{flex:1;display:flex;min-height:0;position:relative}
+#stage{flex:1;min-width:0;touch-action:none;cursor:grab;display:block;background:var(--wall) center/auto}
+#stage.drag{cursor:grabbing}
+.legend{position:absolute;left:16px;bottom:12px;display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--fg);background:color-mix(in srgb,var(--bg) 88%,transparent);border:2px solid var(--ink);padding:6px 10px;border-radius:8px;pointer-events:none;max-width:calc(100% - 392px)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+aside{width:360px;flex-shrink:0;border-left:3px solid var(--ink);background:var(--surface);overflow-y:auto;padding-block:16px;padding-inline:18px}
+@media (max-width:760px){
+  .main{flex-direction:column}
+  aside{width:auto;border-left:0;border-top:3px solid var(--ink);max-height:50%}
+  .legend{display:none}
+}
+/* a node is a paper name plate with an ink outline and a hard shadow, like the game's plates */
+.node rect.card{fill:var(--paper);stroke:var(--ink);stroke-width:2.5}
+.node rect.sh{fill:#000;opacity:.6}
+.node rect.halo{fill:none;stroke:none}
+.node{cursor:pointer;transition:opacity .2s}
+.node:hover rect.card{fill:#fff}
+.node.dead rect.card{fill:#958a8e;stroke-dasharray:7 4}
+.node.gone rect.card{fill:#bcb2b5;stroke-dasharray:2 5;stroke-linecap:round}
+.node .nm{font:700 13px var(--body);font-size:var(--nn,13px);fill:var(--ink)}
+.node .sub{font:11px var(--mono);fill:#55484d}
+.node .rip{fill:#a32a23}
+.node .left{fill:#54497c}
+.node .home{fill:#35701a}
+.node.lit rect.halo{stroke:var(--accent);stroke-width:3}
+.node.sel rect.halo{stroke:var(--accent);stroke-width:6}
+.node.common rect.halo{stroke:var(--common);stroke-width:5}
+.node.pick rect.halo{stroke:var(--mut);stroke-width:6}
+.node.dim{opacity:.25}
+.node.ghost{opacity:.45}
+.edge{fill:none;stroke:var(--thread);stroke-width:2.2;stroke-linecap:round;opacity:.75;transition:opacity .2s}
+.edge.lit{stroke:var(--accent);stroke-width:3.4;opacity:1}
+.edge.cm{stroke:var(--common);stroke-width:3.4;opacity:1}
+.edge.dim{opacity:.18}
+.jn{fill:var(--thread)}
+.coi{font:600 10px var(--mono)}
+#stage.far .sub,#stage.far .coi,#stage.far .stat{display:none}
+.stat{color:#3f3439}
+.stat text{font:700 10.5px var(--mono);fill:var(--ink)}
+.stat text.up{fill:#2f6a14}
+.stat text.dn{fill:#a32a23}
+.stat text.lbl{font:600 7px var(--mono);fill:#55484d}
+.stat .top7{fill:var(--accent);stroke:var(--ink);stroke-width:1.2}
+.node.dead .stat .top7,.node.gone .stat .top7{fill:#d9bd62}
+.stat line{stroke:var(--ink);stroke-width:1;opacity:.25}
+#stage.far .nm{font-size:var(--nf,17px)}
+.ph{display:flex;gap:12px;align-items:center}
+.ph>svg{width:76px;height:76px;flex-shrink:0;background:var(--paper);border:2px solid var(--ink);border-radius:10px}
+.cardbtn{all:unset;display:block;width:136px;flex-shrink:0;cursor:zoom-in;border-radius:10px}
+.cardbtn:hover{filter:brightness(1.12)}
+.cardbtn svg,#lb svg{display:block;width:100%;height:auto;overflow:visible}
+.cardname{font:700 350px var(--body);fill:var(--ink)}
+#lb{position:fixed;inset:0;z-index:10;display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:center;padding:24px;background:rgba(18,13,16,.92);cursor:zoom-out;overflow:auto}
+#lb[hidden]{display:none}
+#lb .big{width:min(440px,80vw,70vh)}
+#lb .bare{width:min(380px,80vw,60vh)}
+#lb figure{margin:0;text-align:center;color:var(--muted);font:11px var(--mono)}
+#lb .x{position:fixed;top:14px;right:16px}
+.node .star{display:none;fill:var(--accent);stroke:var(--ink);stroke-width:1.6;stroke-linejoin:round}
+.node.fav .star,.node.pet .star{display:block}
+.node.pet .star{fill:#ff7f9d}
+.node.fav rect.card,.node.pet rect.card{fill:#f8e7a6}
+.node.fav.dead rect.card,.node.pet.dead rect.card{fill:#c9bb85}
+.node.fav.gone rect.card,.node.pet.gone rect.card{fill:#e2d39a}
+#pet{all:unset;display:flex;flex-direction:row-reverse;align-items:center;gap:11px;cursor:pointer;max-width:min(520px,100%);border-radius:10px;margin-left:auto}
+header.haspet .tools{flex-basis:100%;justify-content:flex-end}
+#pet[hidden]{display:none}
+#pet svg{width:56px;height:56px;flex-shrink:0;background:var(--paper);border:2px solid var(--ink);border-radius:50%}
+#pet svg.pcard{width:96px;height:auto;margin-block:-6px;background:none;border:0;border-radius:0;overflow:visible}
+#pet:hover svg{filter:brightness(1.1)}
+.gold .frm{filter:url(#goldf)}
+.bub{position:relative;background:var(--paper);color:var(--ink);border:2px solid var(--ink);border-radius:12px;box-shadow:0 2px 0 var(--ink);padding:6px 12px 7px;font-weight:700;font-size:14px;line-height:1.25}
+.bub small{display:block;font:600 10px var(--mono);color:#55484d}
+.bub::before{content:"";position:absolute;right:-9px;top:50%;translate:0 -50%;border:7px solid transparent;border-right:0;border-left-color:var(--ink)}
+#fun{position:fixed;inset:0;z-index:9;background:rgba(18,13,16,.8);overflow:auto;padding:24px 16px}
+#fun[hidden]{display:none}
+.funbox{max-width:1000px;margin-inline:auto;background:var(--surface);border:3px solid var(--ink);border-radius:12px;box-shadow:0 5px 0 var(--ink);padding:18px 20px;position:relative}
+.funbox h2{font-family:var(--display);font-size:18px;margin:0;color:var(--accent)}
+.funbox .x{position:absolute;top:14px;right:16px}
+.funrecs{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.funrecs .rec b{font-size:15px;overflow-wrap:anywhere}
+.aws{display:grid;grid-template-columns:repeat(auto-fill,minmax(225px,1fr));gap:8px}
+.aw{display:flex;gap:10px;align-items:center;text-align:left;padding:7px 9px;min-width:0}
+.aw svg{width:52px;height:52px;flex-shrink:0}
+.aw span{min-width:0;display:block}
+.aw b{display:block;font:400 12px var(--display);line-height:1.2}
+.aw em{display:block;font-style:normal;font-weight:700;overflow-wrap:anywhere}
+.aw b,.aw small,.aw i{overflow-wrap:anywhere}
+.tag{overflow-wrap:anywhere}
+.top button b{min-width:0;overflow-wrap:anywhere}
+.links button{overflow-wrap:anywhere;text-align:left}
+.aw i{display:block;font:600 11px var(--mono);font-style:normal;color:#8a1f19}
+.aw small{display:block;font-weight:400;font-size:11px;color:#55484d;line-height:1.25}
+#settings{position:absolute;right:16px;top:calc(100% + 8px);width:290px;background:var(--surface);border:3px solid var(--ink);border-radius:10px;box-shadow:0 4px 0 var(--ink);padding:10px 14px}
+#settings[hidden]{display:none}
+#settings label{display:flex;gap:9px;align-items:flex-start;padding-block:6px;cursor:pointer;line-height:1.3}
+#settings input{margin-top:2px;accent-color:var(--accent)}
+#settings small{display:block;color:var(--muted);font-size:11px}
+#settings label.off{opacity:.5;cursor:default}
+#settings label.lang{align-items:center;justify-content:space-between;border-bottom:2px solid var(--ink);margin-bottom:4px;padding-bottom:9px}
+#langSel{font:700 13px var(--body);color:var(--ink);background:var(--paper);border:2px solid var(--ink);border-radius:8px;padding:2px 6px;cursor:pointer}
+.ph h2{font-family:var(--display);font-size:15px;margin:0 0 4px;line-height:1.15;overflow-wrap:anywhere}
+.tag{display:inline-block;font:600 11px var(--mono);padding:2px 7px;border-radius:4px;background:var(--surface2);color:var(--muted);margin:2px 4px 2px 0}
+.tag.alive{color:var(--mut)} .tag.rip{color:var(--blood)} .tag.left{color:var(--gone)} .tag.warn{color:var(--accent)} .tag.bad{color:var(--blood)}
+h3{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px}
+.stats{display:grid;grid-template-columns:38px 1fr 40px;gap:4px 8px;align-items:center;font:12px var(--mono);font-variant-numeric:tabular-nums}
+.bar{height:7px;background:var(--bg);border-radius:4px;overflow:hidden;display:flex}
+.bar b{display:block;height:100%;background:var(--accent)}
+.bar i{display:block;height:100%;background:var(--mut)}
+.bar i.neg{background:var(--blood)}
+.spells{display:flex;flex-direction:column;gap:6px}
+.spell{background:var(--bg);border:2px solid var(--ink);border-radius:8px;padding:7px 9px;display:flex;gap:10px;align-items:center}
+.spell .st{flex:1;min-width:0;overflow-wrap:anywhere}
+.spell>svg{width:40px;height:40px;flex-shrink:0}
+.ic{display:inline-block;vertical-align:-.15em;flex-shrink:0}
+.tag .ic{margin-right:4px}
+.stats .top7l{color:var(--accent)}
+.stats .top7v{font-style:normal;font-weight:700;background:var(--accent);color:var(--ink);border:1.5px solid var(--ink);border-radius:6px;padding:0 5px;box-shadow:0 1.5px 0 var(--ink)}
+.stats .top7b{outline:1.5px solid var(--accent);outline-offset:1.5px}
+.stats>span:first-child,.stats>span:nth-child(3n+1){display:flex;align-items:center}
+.node .ic{color:#55484d}
+.node .ic.home{color:#35701a}
+.node .sx0{color:#1d63ad;fill:#1d63ad}
+.node .sx1{color:#c02f76;fill:#c02f76}
+.node .sx2{color:#5b4e53;fill:#5b4e53}
+.node .ori{font:700 12px var(--body)}
+.node .ori.o0{fill:#3f3439}
+.node .ori.o1{fill:#7437b0}
+.node .ori.o2{fill:#bd4f00}
+#stage.far .flag{display:none}
+.tag .flag{vertical-align:-2px;margin-right:4px}
+.legend .flag{vertical-align:-2px;margin-right:4px}
+.spell b{font-weight:700;font-size:13px}
+.spell em{font:600 10px var(--mono);font-style:normal;color:var(--accent);margin-left:6px;text-transform:uppercase;letter-spacing:.06em}
+.spell span{display:block;color:var(--muted);font-size:12px;margin-top:2px;line-height:1.4}
+.spell.passive{border-style:dashed;border-color:#6d5f66}
+.spell.dis{border-color:var(--blood)} .spell.dis b{color:var(--blood)}
+.spell.mutx{border-color:var(--mut)} .spell.mutx b{color:var(--mut)}
+.spell.item{border-color:var(--surface2);background:var(--surface2)}
+.recs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.rec{background:var(--bg);border:2px solid var(--ink);border-radius:8px;padding:7px 9px;min-width:0;overflow-wrap:anywhere}
+.rec b{display:block;font:600 17px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.rec span{font-size:11px;color:var(--muted)}
+.links{display:flex;flex-wrap:wrap;gap:6px}
+.links button{font-size:12px;padding:4px 9px}
+.links button.d{background:#958a8e;text-decoration:line-through}
+.links button.g{background:#bcb2b5}
+.meter{font:700 30px var(--mono);font-variant-numeric:tabular-nums}
+.hint{color:var(--muted);line-height:1.5}
+.top{display:flex;flex-direction:column;gap:6px}
+.top button{display:flex;justify-content:space-between;gap:10px;text-align:left}
+.top button span{color:#55484d;font:12px var(--mono)}
+.warnbox{border:1px dashed var(--accent);color:var(--accent);border-radius:7px;padding:8px 10px;font-size:12px;line-height:1.45;margin-top:12px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="titles"><h1 data-en="Colony family tree">Родословная колонии</h1>
+    <span class="metarow"><select id="saveSel" aria-label="Какой сейв показывать" data-en-aria="Which save to show" hidden></select><span class="meta" id="meta"></span></span></div>
+    <button id="pet" hidden></button>
+    <div class="tools">
+      <input id="q" type="search" placeholder="Найти кота…" data-en-ph="Find a cat…" aria-label="Найти кота" data-en-aria="Find a cat" list="names">
+      <datalist id="names"></datalist>
+      <div class="seg" role="group" aria-label="Кого показывать" data-en-aria="Who to show">
+        <button data-mode="house" aria-pressed="true" data-en="House lines">Линии дома</button>
+        <button data-mode="fam" aria-pressed="false" data-en="All families">Все семьи</button>
+        <button data-mode="all" aria-pressed="false" data-en="All cats">Все коты</button>
+        <button data-mode="fav" aria-pressed="false" data-en="★ Favourites">★ Избранные</button>
+        <button data-mode="line" aria-pressed="false" id="lineBtn" hidden></button>
+      </div>
+      <button id="pairBtn" aria-pressed="false" data-en="Compare a pair">Сравнить пару</button>
+      <button id="deadBtn" aria-pressed="false" data-en="Dim the departed">Приглушить ушедших</button>
+      <button id="fitBtn" data-en="Fit">Вписать</button>
+      <button id="funBtn" aria-pressed="false" data-en="Fun stats">Приколы</button>
+      <button id="setBtn" aria-pressed="false" aria-controls="settings" data-en="Settings">Настройки</button>
+    </div>
+    <div id="settings" hidden>
+      <label class="lang"><span data-en="Language">Язык</span><select id="langSel"><option value="ru">Русский</option><option value="en">English</option></select></label>
+      <label><input type="checkbox" data-opt="faces"><span><span data-en="Faces from the game">Морды из игры</span><small data-en="On the tree plates. Turn off if the page is slow: plain icons instead.">На карточках древа. Выключи, если страница тормозит: будут простые иконки.</small></span></label>
+      <label><input type="checkbox" data-opt="stats"><span><span data-en="Stats on the plates">Статы на плашках</span><small data-en="Seven stats under the name: glyph and total (base + levelling and injuries). Green: a bonus, red: a penalty. Gold: born with a 7.">Семь статов под именем: значок и итог (база + прокачка и травмы). Зелёный — есть прибавка, красный — штраф. Золотая подложка — врождённая семёрка.</small></span></label>
+      <label><input type="checkbox" data-opt="full"><span><span data-en="Whole cat">Кот в полный рост</span><small data-en="In the side panel, in the game's frame. Click the frame for a big view.">В панели справа, в рамке из игры. Клик по рамке открывает крупно.</small></span></label>
+      <label><input type="checkbox" data-opt="font"><span><span data-en="Game font">Шрифт из игры</span><small data-en="The hand-written Mewgenics font instead of a regular one.">Рукописный шрифт Mewgenics вместо обычного.</small></span></label>
+      <label><input type="checkbox" data-opt="wall"><span><span data-en="Game wallpaper">Обои из игры</span><small data-en="The tree's background, as on the game's family tree screen.">Фон древа, как на экране родословной.</small></span></label>
+      <small id="ver" style="display:block;text-align:right;color:var(--muted);font-size:11px;margin-top:4px"></small>
+    </div>
+  </header>
+  <div class="main">
+    <svg id="stage" aria-label="Граф родословной" data-en-aria="Family tree graph">
+      <defs>
+        <filter id="gray"><feColorMatrix type="saturate" values="0.1"/><feComponentTransfer><feFuncR type="linear" slope=".72"/><feFuncG type="linear" slope=".72"/><feFuncB type="linear" slope=".72"/></feComponentTransfer></filter>
+        <filter id="goldf" color-interpolation-filters="sRGB"><feFlood flood-color="#f2c230"/><feComposite in2="SourceAlpha" operator="in" result="g"/>
+          <feOffset in="SourceAlpha" dy="-90" result="o"/><feFlood flood-color="#a8720c"/><feComposite in2="SourceAlpha" operator="in"/><feComposite in2="o" operator="out" result="sh"/>
+          <feMerge><feMergeNode in="g"/><feMergeNode in="sh"/></feMerge></filter>
+        <filter id="fade"><feColorMatrix type="saturate" values="0.45"/></filter>
+      </defs>
+      <g id="world"><g id="edges"></g><g id="nodes"></g></g>
+    </svg>
+    <div class="legend">
+      <span><i style="background:var(--paper)"></i><span data-en="at home">в доме</span></span>
+      <span><i style="background:#958a8e"></i><span data-en="dead">погиб</span></span>
+      <span><i style="background:#bcb2b5"></i><span data-en="left alive">ушёл живым</span></span>
+      <span><i style="background:#f8e7a6"></i><span data-en="favourite">избранный</span></span>
+      <span id="lgFlags"></span>
+      <span><i style="background:var(--mut);border-radius:50%"></i><span data-en="mutations">мутации</span></span>
+      <span><i style="background:var(--accent)"></i><span data-en="line of the selected cat">линия выбранного</span></span>
+      <span><i style="background:var(--common)"></i><span data-en="common ancestors">общие предки</span></span>
+    </div>
+    <aside id="panel"></aside>
+  </div>
+</div>
+<div id="lb" hidden></div>
+<div id="fun" hidden></div>
+<script>
+// The page holds every save build_tree.py found; DATA = the shared game art and texts + the chosen save.
+const ALL = /*__MEWTREE_DATA__*/null;
+let SAVESEL=null;
+try{if(ALL.force&&localStorage.getItem('mewtree.force')!==ALL.force){localStorage.setItem('mewtree.force',ALL.force);localStorage.setItem('mewtree.save',ALL.def)}
+  SAVESEL=localStorage.getItem('mewtree.save')}catch(e){}
+const DATA=Object.assign({},ALL,ALL.saves.find(s=>s.saveKey===SAVESEL)||ALL.saves.find(s=>s.saveKey===ALL.def)||ALL.saves[0]);
+// ---------- language: Russian or English, for the page's own words and for the game's texts ----------
+let LANG=null;try{LANG=localStorage.getItem('mewtree.lang')}catch(e){}
+if(LANG!=='ru'&&LANG!=='en')LANG=ALL.lang||((navigator.language||'').toLowerCase().startsWith('ru')?'ru':'en');
+const RU=LANG==='ru',tr=(ru,en)=>RU?ru:en;
+document.documentElement.lang=LANG;
+if(!RU){DATA.npc=DATA.npcEn||DATA.npc;DATA.quotes=DATA.quotesEn||DATA.quotes;document.title='Colony family tree';
+  document.querySelectorAll('[data-en]').forEach(e=>e.textContent=e.dataset.en);
+  document.querySelectorAll('[data-en-ph]').forEach(e=>e.placeholder=e.dataset.enPh);
+  document.querySelectorAll('[data-en-aria]').forEach(e=>e.setAttribute('aria-label',e.dataset.enAria))}
+// counted nouns: P(3,'cat') -> "3 кота" / "3 cats"
+const WORDS={cat:[['кот','кота','котов'],['cat','cats']],ofcat:[['кота','котов','котов'],['cat','cats']],
+  kitten:[['котёнок','котёнка','котят'],['kitten','kittens']],desc:[['потомок','потомка','потомков'],['descendant','descendants']],
+  mut:[['мутация','мутации','мутаций'],['mutation','mutations']],defect:[['дефект','дефекта','дефектов'],['defect','defects']],
+  dis:[['расстройство','расстройства','расстройств'],['disorder','disorders']],mate:[['партнёр','партнёра','партнёров'],['partner','partners']],
+  day:[['день','дня','дней'],['day','days']],item:[['предмет','предмета','предметов'],['item','items']],
+  letter:[['буква','буквы','букв'],['letter','letters']]};
+const P=(n,w)=>{const [r,e]=WORDS[w];if(!RU)return n+' '+(Math.abs(n)===1?e[0]:e[1]);const m=Math.abs(n)%100,k=m%10;return n+' '+(m>10&&m<20?r[2]:k===1?r[0]:k>1&&k<5?r[1]:r[2])};
+if(DATA&&DATA.faceDefs){ // shared parts of the cat faces + palette classes
+  document.head.insertAdjacentHTML('beforeend',`<style>${DATA.faceCss}</style>`);
+  document.body.insertAdjacentHTML('afterbegin',`<svg width="0" height="0" style="position:absolute" aria-hidden="true">${DATA.faceDefs}</svg>`)}
+// ---------- options (per browser) ----------
+const HAS={faces:!!DATA.faceDefs,full:!!(DATA.card&&DATA.faceDefs),wall:!!DATA.wall,stats:true,font:!!DATA.font};
+const opt={faces:true,full:true,wall:true,stats:true,font:true};
+try{Object.assign(opt,JSON.parse(localStorage.getItem('mewtree.opt')||'{}'))}catch(e){}
+const on=k=>HAS[k]&&opt[k];
+// the game's own font (TikaFontIntl converted to TrueType by mewfont.py); glyphs it lacks fall back to the web fonts
+if(DATA.font)document.head.insertAdjacentHTML('beforeend',`<style id="gamefont">@font-face{font-family:"Mewgenics Tika";src:url(data:font/ttf;base64,${DATA.font}) format("truetype");font-weight:100 900}
+:root{--display:"Mewgenics Tika","Rubik Mono One","Arial Black",sans-serif;--body:"Mewgenics Tika","Rubik",system-ui,sans-serif;--mono:"Mewgenics Tika","JetBrains Mono",ui-monospace,monospace}
+body{font-size:15px}h1{font-size:22px}.ph h2,.funbox h2{font-size:20px}h3{font-size:13px;letter-spacing:.08em}.aw b{font-size:15px}.tag,.meta,.aw i,.top button span,.rec span,.spell em{font-size:12px}.node .sub{font-size:12px}</style>`);
+if(DATA.wall)document.head.insertAdjacentHTML('beforeend',`<style>#stage.wall{background-image:linear-gradient(rgba(20,14,17,.74),rgba(20,14,17,.74)),url(${DATA.wall})}</style>`);
+const UI=DATA.uiIcons||{cls:{},sex:[],img:{}};
+const ico=(I,sz,cls='')=>I?`<svg class="ic ${cls}" viewBox="${I[0]}" width="${sz}" height="${sz}" aria-hidden="true">${I[1]}</svg>`:'';
+// a description from the game: \x02str\x02 marks where the text had the game's inline glyph
+const rich=t=>esc(t).replace(/\x02(\w+)\x02/g,(m,k)=>ico((UI.img||{})[k],14)||k.toUpperCase());
+const STATN=RU?['СИЛ','ЛОВ','ТЕЛ','ИНТ','СКР','ХАР','УДЧ']:['STR','DEX','CON','INT','SPD','CHA','LCK'];
+const SLOT_RU=RU?{body:'тело',head:'голова',tail:'хвост',legs:'ноги',arms:'лапы',eyes:'глаза',eyebrows:'брови',ears:'уши',mouth:'рот'}
+  :{body:'body',head:'head',tail:'tail',legs:'legs',arms:'arms',eyes:'eyes',eyebrows:'eyebrows',ears:'ears',mouth:'mouth'};
+const ROOM_RU=RU?{Attic:'чердак',Floor1_Small:'1 этаж, малая',Floor1_Large:'1 этаж, большая',Floor2_Small:'2 этаж, малая',Floor2_Large:'2 этаж, большая',Basement:'подвал','':'у порога'}
+  :{Attic:'attic',Floor1_Small:'1st floor, small room',Floor1_Large:'1st floor, large room',Floor2_Small:'2nd floor, small room',Floor2_Large:'2nd floor, large room',Basement:'basement','':'at the door'};
+const SEX=['♂','♀','?'], SEXW=RU?['кот','кошка','пол ?']:['male','female','sex ?'];
+const clsName=c=>RU?c.clsN:(c.clsE||c.clsN);
+const MN=m=>RU?m[2]:(m[5]||m[2]),MD=m=>RU?m[3]:(m[6]??m[3]);   // a mutation's name and description
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const lib=DATA.lib, all=DATA.cats, cats={};
+all.forEach(c=>{cats[c.id]=c;c.kids=[]});
+all.forEach(c=>c.p.forEach(p=>cats[p]&&cats[p].kids.push(c.id)));
+function genOf(c){if(c.gen!=null)return c.gen;c.gen=0;return c.gen=c.p.length?1+Math.max(...c.p.map(id=>genOf(cats[id]))):0}
+all.forEach(genOf);
+function anc(id,set=new Set()){cats[id].p.forEach(p=>{if(!set.has(p)){set.add(p);anc(p,set)}});return set}
+function desc(id,set=new Set()){cats[id].kids.forEach(k=>{if(!set.has(k)){set.add(k);desc(k,set)}});return set}
+all.forEach(c=>c.nDesc=desc(c.id).size);
+// Wright kinship, unknown parents = unrelated founders
+const km={};
+function kin(a,b){if(a==null||b==null)return 0;const key=a<b?a+'_'+b:b+'_'+a;if(key in km)return km[key];let r;
+  if(a===b){const c=cats[a];r=.5*(1+(c.p.length===2?kin(c.p[0],c.p[1]):0))}
+  else{let x=cats[a],y=b;if(cats[b].gen>x.gen){x=cats[b];y=a}r=x.p.length?x.p.reduce((s,p)=>s+.5*kin(p,y),0):0}
+  return km[key]=r}
+const ageOf=c=>c.born>=0&&DATA.day!=null?DATA.day-c.born:null;
+
+// ---------- icon from save appearance (palette / texture / parts) ----------
+function hsl(h,s,l){return`hsl(${h} ${s}% ${l}%)`}
+function catIcon(c){
+  const dead=c.st==='dead';
+  if(c.face&&on('faces')){ // the cat's own face, composed from the game's catparts.swf (see catface.py)
+    const filt=dead?' filter="url(#gray)"':c.st==='gone'?' filter="url(#fade)"':'';
+    return`<g${filt}><svg width="64" height="64" viewBox="${c.face[0]}" class="pal${c.face[1]}">${c.face[2]}</svg></g>`}
+  const [pal,tex,eye,earL,earR,head,tail,mouth]=c.look;
+  const mutS=new Set(c.mut.filter(m=>!m[4]).map(m=>m[0])), defS=new Set(c.mut.filter(m=>m[4]).map(m=>m[0]));
+  const h=(pal*47)%360,s=22+(pal*13)%34,l=38+(pal*7)%30;
+  const f=hsl(h,s,l),dk=hsl(h,s,Math.max(12,l-24)),lt=hsl(h,Math.max(10,s-10),Math.min(92,l+28));
+  const G='#9fd35c', earC=mutS.has('ears')?G:f, pat=Math.abs(tex)%5;
+  const eyeCols=['#9fd35c','#6cc3d8','#e8b84a','#d4554c','#c9a0ff','#f0e4d7'];
+  const ec=mutS.has('eyes')?G:eyeCols[Math.abs(eye)%6];
+  let o='';
+  const pointy=(Math.abs(earL)%3)!==1;
+  const ear=(side,missing)=>{if(missing)return side<0?`<path d="M15 25 l4-5 4 6" fill="none" stroke="${dk}" stroke-width="1.6"/>`:`<path d="M41 26 l4-6 4 5" fill="none" stroke="${dk}" stroke-width="1.6"/>`;
+    const p=side<0?(pointy?'M10 30 L13 7 L27 21Z':'M10 30 Q9 9 27 20Z'):(pointy?'M54 30 L51 7 L37 21Z':'M54 30 Q55 9 37 20Z');
+    const q=side<0?'M14.5 13 L16 24 L23 21Z':'M49.5 13 L48 24 L41 21Z';
+    return`<path d="${p}" fill="${earC}" stroke="${dk}" stroke-width="1.5"/><path d="${q}" fill="#d98a8a" opacity=".65"/>`};
+  o+=ear(-1,earL===-2)+ear(1,earR===-2);
+  if(tail!==-2)o+=`<path d="M52 52 q12 -2 9 -16" fill="none" stroke="${mutS.has('tail')?G:dk}" stroke-width="4" stroke-linecap="round"/>`;
+  o+=`<ellipse cx="32" cy="37" rx="23" ry="20" fill="${mutS.has('head')?`color-mix(in srgb,${f} 70%,${G})`:f}" stroke="${dk}" stroke-width="1.5"/>`;
+  if(pat===1)o+=`<path d="M32 18v7M25 19.5l2 6M39 19.5l-2 6M10 38h7M47 38h7M11 44h6M47 44h6" stroke="${dk}" stroke-width="2.4" stroke-linecap="round"/>`;
+  if(pat===2)o+=`<circle cx="20" cy="27" r="4" fill="${dk}"/><circle cx="45" cy="47" r="3.5" fill="${dk}"/><circle cx="41" cy="22.5" r="2.5" fill="${dk}"/>`;
+  if(pat===3)o+=`<path d="M10 37 Q14 22 28 19 Q24 30 10 37Z" fill="${dk}"/><path d="M54 37 Q50 24 38 20 Q44 32 54 37Z" fill="${lt}"/>`;
+  if(pat===3||pat===4)o+=`<ellipse cx="32" cy="47" rx="12" ry="9" fill="${lt}"/>`;
+  const brow=mutS.has('eyebrows')?G:dk;
+  o+=`<path d="M17 27.5 l9 1.5M47 27.5 l-9 1.5" stroke="${brow}" stroke-width="${mutS.has('eyebrows')?2.6:1.4}" stroke-linecap="round"/>`;
+  if(dead)o+=`<path d="M19 32l7 7M26 32l-7 7M38 32l7 7M45 32l-7 7" stroke="#231a1e" stroke-width="2.6" stroke-linecap="round"/>`;
+  else if(defS.has('eyes'))o+=`<path d="M18 35.5h9" stroke="#231a1e" stroke-width="2.2" stroke-linecap="round"/><ellipse cx="41" cy="35" rx="5" ry="5.5" fill="${ec}" stroke="#231a1e" stroke-width="1.2"/><ellipse cx="41" cy="35.5" rx="1.6" ry="4" fill="#1b1416"/>`;
+  else o+=`<ellipse cx="23" cy="35" rx="5" ry="5.5" fill="${ec}" stroke="#231a1e" stroke-width="1.2"/><ellipse cx="23" cy="35.5" rx="1.6" ry="4" fill="#1b1416"/><ellipse cx="41" cy="35" rx="5" ry="5.5" fill="${ec}" stroke="#231a1e" stroke-width="1.2"/><ellipse cx="41" cy="35.5" rx="1.6" ry="4" fill="#1b1416"/>`;
+  o+=`<path d="M29.5 43h5l-2.5 3Z" fill="#d97474"/>`;
+  if(mouth!==-2)o+=`<path d="M32 46q-3 4-6 2M32 46q3 4 6 2" fill="none" stroke="${mutS.has('mouth')?G:'#231a1e'}" stroke-width="1.4" stroke-linecap="round"/>`;
+  if(mutS.has('mouth'))o+=`<path d="M34 47.5l2 5 1.5-5Z" fill="#f4f0e2" stroke="#231a1e" stroke-width=".7"/>`;
+  const filt=dead?' filter="url(#gray)"':c.st==='gone'?' filter="url(#fade)"':'';
+  return`<g${filt}>${o}</g>`}
+
+// The whole cat (catface.py body(): \x01H marks where the face goes) and the game's family tree card around it.
+const catFull=c=>`<g class="pal${c.face[1]}">${c.body[1].replace('\x01H',()=>c.face[2])}</g>`;
+const _cv=document.createElement('canvas').getContext('2d');
+function textW(t,px){_cv.font=`700 ${px}px ${getComputedStyle(document.body).fontFamily}`;return _cv.measureText(t).width}
+function cardSvg(c,cls=''){
+  const K=DATA.card,filt=c.st==='dead'?' filter="url(#gray)"':c.st==='gone'?' filter="url(#fade)"':'';
+  const art=K.tpl[Math.min(Math.max(c.sex,0),2)].replace('\x01B',()=>`<g${filt}>${K.bgs[c.id%K.bgs.length]}</g>`).replace('\x01C',()=>`<g${filt}>${catFull(c)}</g>`); // greyed inside; the frame keeps its colour
+  const fit=K.plate&&textW(c.n,350)>K.plate[2]*.84?` textLength="${Math.round(K.plate[2]*.84)}" lengthAdjust="spacingAndGlyphs"`:'';   // squeeze a long name onto the plate
+  const name=K.plate?`<text class="cardname" x="${K.plate[0]}" y="${K.plate[1]}" text-anchor="middle" dominant-baseline="central"${fit}>${esc(c.n)}</text>`:'';
+  return`<svg class="${cls}" viewBox="${K.vb}" role="img" aria-label="${esc(c.n)}"><g>${art}${name}</g></svg>`}
+const lb=document.getElementById('lb');
+function zoomCat(c){
+  lb.innerHTML=`<button class="x">${tr('Закрыть','Close')}</button><figure class="big">${cardSvg(c)}</figure>
+    <figure class="bare"><svg viewBox="${c.body[0]}" role="img" aria-label="${esc(c.n)}">${catFull(c)}</svg>${tr('без рамки, чтобы уши и хвост не обрезались','without the frame, so ears and tail are not cut off')}</figure>`;
+  lb.hidden=false}
+lb.addEventListener('click',()=>{lb.hidden=true;lb.innerHTML=''});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&!lb.hidden){lb.hidden=true;lb.innerHTML=''}});
+
+// ---------- texts ----------
+const libEn=DATA.libEn||{};
+const L=k=>{const b=lib[k]||[k.replace(/^.:/,'').replace(/:\d+$/,''),'',false],e=!RU&&libEn[k];return e?[e[0]||b[0],e[1]??b[1],b[2],b[3]]:b};
+function coiTag(v){const p=tr('инбридинг ','inbreeding ')+(v*100).toFixed(1)+'%';return v>=.125?`<span class="tag bad">${p}</span>`:v>=.03?`<span class="tag warn">${p}</span>`:v>0?`<span class="tag">${p}</span>`:''}
+const coiColor=v=>v>=.125?'#a32a23':v>=.03?'#8a5d00':'#55484d'; // ink on the paper plates
+// what the save's status flags say happened to the cat (see mewsave.py)
+function fate(c){const f=c.fl||0,N=DATA.npc||{};for(let b=11;b<=17;b++)if(f>>b&1)return tr('отдан: ','given to: ')+(N[b]||'NPC');return f>>18&1?tr('погиб в бою','died in battle'):f>>10&1?tr('умер от старости','died of old age'):null}
+const oriTag=c=>c.sx==null?'':`<span class="tag">${flag(oriOf(c),19,12)}${ORI_L[oriOf(c)]}</span>`;
+function statusTag(c){const f=fate(c);return c.st==='house'?`<span class="tag alive">${tr('в доме','at home')} · ${esc(ROOM_RU[c.room]??c.room)}</span>`:c.st==='dead'?`<span class="tag rip">† ${esc(f||tr('погиб','dead'))}</span>`:`<span class="tag left">${esc(f||tr('ушёл живым','left alive'))}</span>`}
+
+// ---------- favourites and the one pet cat: kept in this browser, per Steam account + save file ----------
+const SKEY=DATA.saveKey||DATA.save;
+const store=(k,v)=>{try{const key='mewtree.'+k+':'+SKEY;if(v!==undefined){localStorage.setItem(key,JSON.stringify(v));return}
+    const old='mewtree.'+k+':'+DATA.save;   // picks made before accounts were told apart move to the first account opened
+    if(localStorage.getItem(key)==null&&old!==key&&localStorage.getItem(old)!=null){localStorage.setItem(key,localStorage.getItem(old));localStorage.removeItem(old)}
+    return JSON.parse(localStorage.getItem(key))}catch(e){return null}};
+const favs=new Set((store('fav')||[]).filter(id=>cats[id]));
+let pet=store('pet');if(!cats[pet])pet=null;
+const STAR='M9 .8l2.5 5.3 5.8.7-4.3 4 1.1 5.7L9 13.7l-5.1 2.8L5 10.8.7 6.8l5.8-.7z';
+function renderPet(){const el=document.getElementById('pet'),c=cats[pet];el.hidden=!c;el.closest('header').classList.toggle('haspet',!!c);if(!c)return;
+  const qs=(DATA.quotes||{})[c.cls]||(DATA.quotes||{}).Colorless||[];   // a new line of the cat's class on every page load
+  const full=DATA.card&&c.body&&c.face;                                  // the framed portrait; the bare face without the game art
+  el.innerHTML=`${full?cardSvg(c,'pcard gold'):`<svg viewBox="0 0 64 64" aria-hidden="true">${catIcon(c)}</svg>`}<span class="bub">${full?'':`<small>${esc(c.n)}</small>`}${esc(qs.length?qs[Math.floor(Math.random()*qs.length)]:tr('Мяу!','Meow!'))}</span>`;
+  el.setAttribute('aria-label',tr('Любимчик: ','Pet cat: ')+c.n)}
+function toggleFav(id){favs.has(id)?favs.delete(id):favs.add(id);store('fav',[...favs]);mode==='fav'?layout():apply()}
+function setPet(id){pet=pet===id?null:id;store('pet',pet);renderPet();mode==='fav'?layout():apply()}
+
+// second line of a node: status mark or the game's sex glyph, the class glyph, the class name
+// For cats in the house: a big sex glyph in the sex's colour and the orientation, so pairs can be read off the tree.
+const oriOf=c=>c.sx==null?null:c.sx<.1?0:c.sx>.9?2:1, ORI_L=RU?['натурал','би','гей']:['straight','bi','gay'];
+// orientation as a little flag: straight (black and white), bi, rainbow
+const FLAGS=[['#111','#fff','#111','#fff','#111','#fff'],['#d60270','#d60270','#9b4f96','#0038a8','#0038a8'],['#e40303','#ff8c00','#ffed00','#008026','#004dff','#750787']];
+function flag(o,w,h,attr=''){const st=FLAGS[o],sh=h/st.length;
+  return`<svg class="flag" ${attr} width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${ORI_L[o]}"><title>${ORI_L[o]}</title>${st.map((c,i)=>`<rect y="${(i*sh).toFixed(2)}" width="${w}" height="${(sh+.3).toFixed(2)}" fill="${c}"/>`).join('')}<rect x=".75" y=".75" width="${w-1.5}" height="${h-1.5}" rx="2" fill="none" stroke="#120d10" stroke-width="1.5"/></svg>`}
+function nodeSub(c,y){const g=(I,x,k,sz=12)=>`<svg class="ic ${k}" x="${x}" y="${y-sz+2}" width="${sz}" height="${sz}" viewBox="${I[0]}">${I[1]}</svg>`;
+  const S=UI.sex[c.sex],K=UI.cls[c.cls],o=oriOf(c);let x=65,mark='';
+  if(c.st==='dead'){mark=`<text class="sub rip" x="66" y="${y}">†</text>`;x=78}          // everyone gets the sex glyph and the flag;
+  else if(c.st==='gone'){mark=`<text class="sub left" x="65" y="${y}">↗</text>`;x=78}   // the dead and the gone also keep their mark
+  mark+=`<title>${SEXW[c.sex]??''}</title>`+(S?g(S,x,'sx'+c.sex,19):`<text class="sub sx${c.sex}" style="font-size:19px" x="${x+1}" y="${y+1}">${SEX[c.sex]??''}</text>`);x+=23;
+  if(o!=null){mark+=flag(o,25,16,`x="${x}" y="${y-13}"`);x+=30}
+  return`<g>${mark}</g>${K?g(K,x,''):''}<text class="sub" x="${K?x+15:x}" y="${y}">${esc(clsName(c))}</text>`}
+// would x go for y? straight: the other sex, gay: the same sex, bi: anyone ("?" sex and unknown orientation: no objection)
+const fancies=(x,y)=>x.sx==null||x.sex===2||y.sex===2||(x.sx<.1?x.sex!==y.sex:x.sx>.9?x.sex===y.sex:true);
+
+// ---------- state ----------
+let mode='house',focus=null,sel=null,pairMode=false,pick=[],muteGone=false,shown=new Set(),nodeEls={},edgeEls=[];
+const svg=document.getElementById('stage'),world=document.getElementById('world'),edgesG=document.getElementById('edges'),nodesG=document.getElementById('nodes'),panel=document.getElementById('panel');
+let W=176,H=64;
+const FULLSTAT=RU?['Сила','Ловкость','Телосложение','Интеллект','Скорость','Харизма','Удача']:['Strength','Dexterity','Constitution','Intelligence','Speed','Charisma','Luck'];
+const BORN7=tr(' (врождённая семёрка)',' (born with a 7)');
+function sizeNodes(){const s=on('stats');W=236;H=s?86:64}
+sizeNodes();
+// stat strip of a node: the game's glyph (or a short label without the game) + the total
+function statStrip(c){const cw=(W-12)/7;
+  return`<g class="stat"><line x1="8" x2="${W-8}" y1="65.5" y2="65.5"/>`+c.base.map((b,i)=>{const x=6+i*cw,v=b+c.bonus[i],k=c.bonus[i]>0?'up':c.bonus[i]<0?'dn':'';
+    const ic=DATA.statIcons?`<svg x="${x}" y="69" width="11" height="11" viewBox="${DATA.statIcons[i][0]}">${DATA.statIcons[i][1]}</svg>`:`<text class="lbl" x="${x}" y="78">${STATN[i][0]}</text>`;
+    const top=b>=7?`<rect class="top7" x="${x-2}" y="67.5" width="${cw-1}" height="14.5" rx="4.5"/>`:'';   // born with 7: gold
+    return`<g><title>${FULLSTAT[i]}: ${b}${c.bonus[i]?(c.bonus[i]>0?' + ':' − ')+Math.abs(c.bonus[i]):''}${b>=7?BORN7:''}</title>${top}${ic}<text class="${k}" x="${x+(DATA.statIcons?12.5:7)}" y="78.5"${String(v).length>1?` textLength="${Math.min(15,cw-14).toFixed(1)}" lengthAdjust="spacingAndGlyphs"`:''}>${v}</text></g>`}).join('')+'</g>'}
+function visibleSet(){
+  const s=new Set();
+  if(mode==='all')all.forEach(c=>s.add(c.id));
+  else if(mode==='fav'){favs.forEach(id=>s.add(id));if(pet!=null)s.add(pet)}
+  else if(mode==='fam')all.forEach(c=>{if(c.p.length||c.kids.length||c.st==='house')s.add(c.id)});
+  else if(mode==='line'&&focus!=null){s.add(focus);anc(focus).forEach(a=>s.add(a));desc(focus).forEach(d=>{s.add(d);cats[d].p.forEach(p=>s.add(p))})}
+  else all.forEach(c=>{if(c.st==='house'){s.add(c.id);anc(c.id).forEach(a=>s.add(a))}});
+  return s}
+
+// Layered layout: rank = generation (parentless founders pulled down next to their kids),
+// order by barycenter sweeps, x by neighbour averaging + overlap resolution, one block per family component.
+const GX=20,GY=78;
+function layoutComponent(ids){
+  const S=new Set(ids),rank={};
+  const par=id=>cats[id].p.filter(p=>S.has(p)),kid=id=>cats[id].kids.filter(k=>S.has(k));
+  const r=id=>{if(rank[id]!=null)return rank[id];rank[id]=0;const ps=par(id);return rank[id]=ps.length?1+Math.max(...ps.map(r)):0};
+  ids.forEach(r);
+  for(let it=0;it<3;it++)ids.slice().sort((a,b)=>rank[b]-rank[a]).forEach(id=>{if(!par(id).length){const ks=kid(id);if(ks.length)rank[id]=Math.max(rank[id],Math.min(...ks.map(k=>rank[k]))-1)}});
+  const rows=[];ids.forEach(id=>(rows[rank[id]]||=[]).push(id));
+  for(let i=0;i<rows.length;i++)rows[i]||=[];
+  const ord={};const setOrd=()=>rows.forEach(row=>row.forEach((id,i)=>ord[id]=i));
+  rows.forEach(row=>row.sort((a,b)=>cats[a].born-cats[b].born||a-b));setOrd();
+  const nb=(id,dir)=>dir<0?par(id):kid(id);
+  const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+  for(let it=0;it<10;it++){
+    const down=it%2===0;
+    const seq=down?rows.map((_,i)=>i):rows.map((_,i)=>rows.length-1-i);
+    seq.forEach(i=>{const row=rows[i];const key={};
+      row.forEach(id=>{const n=nb(id,down?-1:1);
+        // keep mates together: a parent also looks at its mates through shared kids
+        key[id]=n.length?avg(n.map(x=>ord[x])):ord[id]});
+      row.sort((a,b)=>key[a]-key[b]);row.forEach((id,j)=>ord[id]=j)})}
+  // x coordinates
+  const x={};rows.forEach(row=>row.forEach((id,i)=>x[id]=i*(W+GX)));
+  const resolve=row=>{for(let i=1;i<row.length;i++){const m=x[row[i-1]]+W+GX;if(x[row[i]]<m)x[row[i]]=m}
+    for(let i=row.length-2;i>=0;i--){const m=x[row[i+1]]-W-GX;if(x[row[i]]>m)x[row[i]]=Math.max(m,x[row[i]]-(x[row[i]]-m))}};
+  for(let it=0;it<24;it++){
+    const down=it%2===0;
+    (down?rows:rows.slice().reverse()).forEach(row=>{
+      row.forEach(id=>{const n=[...par(id),...kid(id)];if(n.length)x[id]=x[id]*.3+.7*avg(n.map(v=>x[v]))});
+      // keep order, push apart symmetrically
+      for(let pass=0;pass<3;pass++){
+        for(let i=1;i<row.length;i++){const a=row[i-1],b=row[i],ov=x[a]+W+GX-x[b];if(ov>0){x[a]-=ov/2;x[b]+=ov/2}}}
+      for(let i=1;i<row.length;i++){const m=x[row[i-1]]+W+GX;if(x[row[i]]<m)x[row[i]]=m}})}
+  const minx=Math.min(...ids.map(id=>x[id]));
+  const pos={};ids.forEach(id=>pos[id]={x:x[id]-minx+W/2,y:rank[id]*(H+GY)+H/2});
+  return{pos,w:Math.max(...ids.map(id=>x[id]))-minx+W,h:rows.length*(H+GY)-GY}}
+
+function layout(){
+  shown=visibleSet();const list=all.filter(c=>shown.has(c.id));
+  // connected components
+  const comp={},groups=[];
+  list.forEach(c=>{if(comp[c.id]!=null)return;const g=[],st=[c.id];comp[c.id]=groups.length;
+    while(st.length){const id=st.pop();g.push(id);[...cats[id].p,...cats[id].kids].forEach(n=>{if(shown.has(n)&&comp[n]==null){comp[n]=groups.length;st.push(n)}})}
+    groups.push(g)});
+  const fams=groups.filter(g=>g.length>1).sort((a,b)=>b.length-a.length),singles=groups.filter(g=>g.length===1).map(g=>g[0]);
+  const pos={};let ox=0,maxH=0;
+  fams.forEach(g=>{const L=layoutComponent(g);g.forEach(id=>pos[id]={x:L.pos[id].x+ox,y:L.pos[id].y});ox+=L.w+120;maxH=Math.max(maxH,L.h)});
+  if(singles.length){singles.sort((a,b)=>({house:0,dead:1,gone:2}[cats[a].st]-{house:0,dead:1,gone:2}[cats[b].st])||a-b);
+    const cols=Math.max(4,Math.ceil(Math.sqrt(singles.length*2.2)));const y0=fams.length?maxH+180:0;
+    singles.forEach((id,i)=>pos[id]={x:(i%cols)*(W+GX)+W/2,y:y0+Math.floor(i/cols)*(H+24)+H/2})}
+  // edges: one junction per parent pair, then a curve to each kid
+  let eh='';const fam={};
+  list.forEach(c=>{const ps=c.p.filter(p=>shown.has(p));if(!ps.length)return;const k=ps.slice().sort((a,b)=>a-b).join('_');(fam[k]||=[]).push(c.id)});
+  for(const k in fam){const ps=k.split('_').map(Number),kids=fam[k];
+    const jx=ps.reduce((s,p)=>s+pos[p].x,0)/ps.length,py=Math.max(...ps.map(p=>pos[p].y))+H/2;
+    const ky=Math.min(...kids.map(id=>pos[id].y))-H/2,jy=py+Math.min(GY/2,(ky-py)/2);
+    ps.forEach(p=>{const a=pos[p];eh+=`<path class="edge" data-p="${p}" data-k="${kids.join('_')}" d="M${a.x},${a.y+H/2} C${a.x},${jy} ${jx},${a.y+H/2} ${jx},${jy}"/>`});
+    kids.forEach(id=>{const b=pos[id],ty=b.y-H/2;eh+=`<path class="edge" data-p="${k}" data-k="${id}" d="M${jx},${jy} C${jx},${(jy+ty)/2} ${b.x},${(jy+ty)/2} ${b.x},${ty}"/>`});
+    if(ps.length>1)eh+=`<circle class="jn" cx="${jx}" cy="${jy}" r="3.5"/>`}
+  edgesG.innerHTML=eh;edgeEls=[...edgesG.querySelectorAll('.edge')];
+  nodesG.innerHTML=list.map(c=>{const p=pos[c.id],x=p.x-W/2,y=p.y-H/2;
+    const mark=c.st==='dead'?'<tspan class="rip">†</tspan>':c.st==='gone'?'<tspan class="left">↗</tspan>':`<tspan class="home">${SEX[c.sex]??''}</tspan>`;
+    const nm=c.n.length>22?c.n.slice(0,21)+'…':c.n;
+    const l3=[c.lvl?tr('ур.','lv.')+c.lvl:'',c.st==='gone'?`<tspan class="left">${tr('ушёл','left')}</tspan>`:'',c.coi>0?`<tspan fill="${coiColor(c.coi)}">${(c.coi*100).toFixed(1)}%</tspan>`:''].filter(Boolean).join(' · ');
+    return`<g class="node ${c.st}" data-id="${c.id}" transform="translate(${x},${y})" tabindex="0" role="button" aria-label="${esc(c.n)}">
+      <rect class="sh" x="3" y="4" width="${W}" height="${H}" rx="12"/><rect class="halo" x="-5" y="-5" width="${W+10}" height="${H+10}" rx="16"/>
+      <rect class="card" width="${W}" height="${H}" rx="12"/>
+      <svg x="5" y="4" width="56" height="56" viewBox="0 0 64 64">${catIcon(c)}</svg>
+      <text class="nm" x="66" y="${l3?18:24}">${esc(nm)}</text>${nodeSub(c,l3?39:46)}
+      ${l3?`<text class="sub coi" x="66" y="58">${l3}</text>`:''}${on('stats')?statStrip(c):''}<path class="star" d="${STAR}" transform="translate(-8,-9) scale(1.15)"/>
+      ${c.mut.length?`<circle cx="${W-11}" cy="11" r="5" stroke="var(--ink)" stroke-width="1.5" fill="${c.mut.some(m=>m[4])?'var(--blood)':'var(--mut)'}"><title>${tr('мутации','mutations')}: ${c.mut.length}</title></circle>`:''}</g>`}).join('');
+  nodeEls={};nodesG.querySelectorAll('.node').forEach(el=>nodeEls[el.dataset.id]=el);
+  fitNames();
+  pos_=pos;fit();apply()}
+let pos_={};
+// Long names: shrink the font until the name fits the plate (and the bigger zoomed-out size separately).
+function fitNames(){const far=svg.classList.contains('far');svg.classList.remove('far');
+  for(const id in nodeEls){const t=nodeEls[id].querySelector('.nm');t.style.removeProperty('--nn');t.style.removeProperty('--nf');
+    const room=W-66-(cats[id].mut.length?24:9),w=t.getComputedTextLength();
+    if(w>room)t.style.setProperty('--nn',Math.max(8,13*room/w).toFixed(1)+'px');
+    if(w*17/13>room)t.style.setProperty('--nf',Math.max(8,13*room/w).toFixed(1)+'px');
+    for(const u of nodeEls[id].querySelectorAll('text.sub')){u.removeAttribute('textLength');   // a long class name ("Necromancer") is squeezed to the plate
+      const x=+u.getAttribute('x'),uw=u.getComputedTextLength();
+      if(x+uw>W-7){u.setAttribute('textLength',Math.max(10,W-7-x).toFixed(1));u.setAttribute('lengthAdjust','spacingAndGlyphs')}}}
+  svg.classList.toggle('far',far)}
+document.fonts&&document.fonts.ready.then(()=>{if(Object.keys(nodeEls).length)fitNames()});
+
+// ---------- highlight ----------
+function apply(){
+  const lit=new Set(),common=new Set();
+  if(pairMode&&pick.length===2){const A=anc(pick[0]),B=anc(pick[1]);A.forEach(x=>B.has(x)&&common.add(x));
+    const climb=id=>{cats[id].p.forEach(p=>{const pa=anc(p);pa.add(p);if([...common].some(x=>pa.has(x))&&!lit.has(p)){lit.add(p);climb(p)}})};
+    pick.forEach(p=>{lit.add(p);climb(p)})}
+  else if(!pairMode&&sel!=null){lit.add(sel);anc(sel).forEach(x=>lit.add(x));desc(sel).forEach(x=>lit.add(x))}
+  const any=lit.size>0;
+  for(const id in nodeEls){const el=nodeEls[id],c=cats[id];
+    el.classList.toggle('fav',favs.has(c.id));el.classList.toggle('pet',c.id===pet);
+    el.classList.toggle('sel',!pairMode&&c.id===sel);el.classList.toggle('pick',pairMode&&pick.includes(c.id));
+    el.classList.toggle('common',common.has(c.id));el.classList.toggle('lit',lit.has(c.id));
+    el.classList.toggle('dim',any&&!lit.has(c.id)&&!common.has(c.id));
+    el.classList.toggle('ghost',muteGone&&c.st!=='house'&&!lit.has(c.id))}
+  edgeEls.forEach(e=>{const ps=e.dataset.p.split('_'),ks=e.dataset.k.split('_');
+    const ok=ps.some(x=>lit.has(+x))&&ks.some(x=>lit.has(+x))&&(ps.length>1||ks.length>1||true);
+    e.classList.toggle('lit',ok&&!pairMode);e.classList.toggle('cm',ok&&pairMode);e.classList.toggle('dim',any&&!ok)});
+  renderPanel()}
+
+// ---------- panel ----------
+const iconSvg=c=>`<svg viewBox="0 0 64 64" aria-hidden="true">${catIcon(c)}</svg>`;
+const linkBtn=id=>{const c=cats[id];return`<button class="${c.st==='dead'?'d':c.st==='gone'?'g':''}" data-go="${id}">${esc(c.n)}</button>`};
+const spell=(k,cls='',extra='')=>{const [n,d,dis]=L(k);return`<div class="spell ${cls}${dis?' dis':''}">${ico((DATA.ico||{})[k],40)}<div class="st"><b>${esc(n)}</b>${extra}${d?`<span>${rich(d)}</span>`:''}</div></div>`};
+const statLbl=(i,top)=>`<span title="${FULLSTAT[i]}${top?BORN7:''}"${top?' class="top7l"':''}>${ico(DATA.statIcons&&DATA.statIcons[i],17)||STATN[i]}</span>`;   // the game's stat glyph, else the short name
+function statRows(c){return STATN.map((s,i)=>{const b=c.base[i],x=c.bonus[i],tot=b+x;
+  return`${statLbl(i,b>=7)}<div class="bar${b>=7?' top7b':''}"><b style="width:${Math.min(100,b*10)}%"></b>${x?`<i class="${x<0?'neg':''}" style="width:${Math.min(100,Math.abs(x)*10)}%"></i>`:''}</div><span>${b>=7?`<em class="top7v">${b}</em>`:b}${x?`<small style="color:var(--${x<0?'blood':'mut'})">${x>0?'+':''}${x}</small>`:''}</span>`}).join('')}
+function colonyPanel(){
+  const house=all.filter(c=>c.st==='house'),dead=all.filter(c=>c.st==='dead'),gone=all.filter(c=>c.st==='gone');
+  const top=(arr,f,fmt)=>{const c=arr.slice().sort((a,b)=>f(b)-f(a))[0];return c?`<button data-go="${c.id}"><b>${esc(c.n)}</b><span>${fmt(c)}</span></button>`:''};
+  const sum=c=>c.base.reduce((a,b)=>a+b,0);
+  return`<h3 style="margin-top:0">${tr('Колония · день','Colony · day')} ${DATA.day??'?'}</h3>
+  <div class="recs"><div class="rec"><b>${house.length}</b><span>${tr('в доме','at home')}</span></div><div class="rec"><b>${dead.length}</b><span>${tr('погибли','dead')}</span></div><div class="rec"><b>${gone.length}</b><span>${tr('ушли живыми','left alive')}</span></div></div>
+  <h3>${tr('Рекорды','Records')}</h3><div class="top">
+   ${top(all,c=>c.nDesc,c=>P(c.nDesc,'desc'))}
+   ${top(all,c=>c.gen,c=>tr(c.gen+'-е поколение','generation '+c.gen))}
+   ${top(all,c=>c.lvl,c=>tr('уровень ','level ')+c.lvl+' · '+esc(clsName(c)))}
+   ${top(all,sum,c=>tr('базовые статы: ','base stats: ')+sum(c))}
+   ${top(house,sum,c=>tr('лучший в доме: ','best at home: ')+sum(c))}
+   ${top(all,c=>c.coi,c=>tr('инбридинг ','inbreeding ')+(c.coi*100).toFixed(1)+'%')}
+   ${top(all,c=>c.kids.length,c=>P(c.kids.length,'kitten'))}
+  </div>
+  <p class="hint" style="margin-top:14px">${tr('Тыкни на кота: подсвечу всю его линию вверх и вниз и покажу спеллы, пассивки, мутации и статы. Колесо или щипок для зума.','Click a cat: its whole line up and down lights up, and you get its abilities, passives, mutations and stats. Wheel or pinch to zoom.')}</p>
+  ${DATA.texts?'':`<div class="warnbox">${tr('Игра не найдена: названия показаны по ключам игры, без описаний и картинок.','The game was not found: names are shown by their internal keys, with no descriptions and no art.')}</div>`}`}
+function renderPanel(){
+  if(pairMode){
+    if(pick.length<2){panel.innerHTML=`<h3 style="margin-top:0">${tr('Сравнение пары','Compare a pair')}</h3><p class="hint">${tr('Выбери двух котов. Покажу общих предков и инбридинг котёнка по Райту (так же считает игра).','Pick two cats. You get their common ancestors and the kitten\'s inbreeding by Wright\'s formula (the way the game counts it).')}</p>${pick.length?`<p>${tr('Первый','First')}: <b>${esc(cats[pick[0]].n)}</b></p>`:''}`;return}
+    const [a,b]=pick.map(id=>cats[id]);const k=kin(a.id,b.id);const A=anc(a.id),B=anc(b.id);const cm=[...A].filter(x=>B.has(x));
+    const v=k>=.125?['bad',tr('Высокий риск дефектов','High risk of defects'),'blood']:k>=.03?['warn',tr('Терпимо, но следи','Tolerable, keep an eye on it'),'accent']:['alive',tr('Чистая пара','Clean pair'),'mut'];
+    const sexWarn=(a.sex===b.sex&&a.sex!==2)?`<div class="warnbox">${tr('Один пол: котят не будет.','Same sex: no kittens.')}</div>`:'';
+    const deadWarn=[a,b].filter(c=>c.st!=='house').map(c=>`<div class="warnbox">${esc(c.n)} ${tr('не в доме.','is not at home.')}</div>`).join('');
+    panel.innerHTML=`<h3 style="margin-top:0">${tr('Сравнение пары','Compare a pair')}</h3><div class="ph">${iconSvg(a)}${iconSvg(b)}</div>
+      <p><b>${esc(a.n)}</b> × <b>${esc(b.n)}</b></p>
+      <p style="margin-top:-6px">${[a,b].map(x=>`<span class="tag">${ico(UI.sex[x.sex],13)}${SEXW[x.sex]??''}${oriOf(x)!=null?' · '+flag(oriOf(x),19,12)+ORI_L[oriOf(x)]:''}</span>`).join(' × ')}</p>
+      ${sexWarn}${[[a,b],[b,a]].filter(([x,y])=>!fancies(x,y)).map(([x,y])=>`<div class="warnbox">${tr(`${esc(x.n)} — ${ORI_L[oriOf(x)]}, на ${esc(y.n)} не посмотрит.`,`${esc(x.n)} is ${ORI_L[oriOf(x)]} and will not look at ${esc(y.n)}.`)}</div>`).join('')}${deadWarn}
+      <h3>${tr('Инбридинг котёнка','Kitten\'s inbreeding')}</h3><div class="meter" style="color:var(--${v[2]})">${(k*100).toFixed(1)}%</div><span class="tag ${v[0]}">${v[1]}</span>
+      <h3>${tr('Общие предки','Common ancestors')} · ${cm.length}</h3><div class="links">${cm.length?cm.map(linkBtn).join(''):`<span class="hint">${tr('Не родня','Not related')}</span>`}</div>
+      <h3>${tr('Базовые статы котёнка','Kitten\'s base stats')}</h3><p class="hint" style="margin:0 0 6px">${tr('Каждый стат берётся от одного из родителей.','Each stat comes from one of the parents.')}</p>
+      <div class="stats">${STATN.map((s,i)=>{const lo=Math.min(a.base[i],b.base[i]),hi=Math.max(a.base[i],b.base[i]);return`${statLbl(i)}<div class="bar"><span style="width:${lo*10}%"></span><b style="width:${Math.max(3,(hi-lo)*10)}%"></b></div><span>${lo===hi?lo:lo+'/'+hi}</span>`}).join('')}</div>`;
+    return}
+  if(sel==null){panel.innerHTML=(mode==='fav'&&!shown.size?`<div class="warnbox" style="margin:0 0 14px">${tr('Избранных пока нет. Открой кота и нажми «☆ В избранное».','No favourites yet. Open a cat and press “☆ Favourite”.')}</div>`:'')+colonyPanel();return}
+  const c=cats[sel];const age=ageOf(c);
+  const innate=new Set(c.inn);
+  const full=on('full')&&c.body&&c.face;
+  panel.innerHTML=`<div class="ph">${full?`<button class="cardbtn" data-zoom="${c.id}" aria-label="${tr('Показать крупно','Show big')}: ${esc(c.n)}">${cardSvg(c)}</button>`:iconSvg(c)}<div style="min-width:0"><h2>${esc(c.n)}</h2>
+    ${statusTag(c)}<span class="tag">${ico(UI.sex[c.sex],13)}${SEXW[c.sex]??''}</span>${oriTag(c)}<span class="tag">${ico(UI.cls[c.cls],14)}${esc(clsName(c))}${c.lvl?' · '+tr('ур.','lv.')+c.lvl:''}</span><span class="tag" title="${tr('поколение','generation')}">${tr('П','G')}${c.gen}</span>${coiTag(c.coi)}</div></div>
+    <div class="links" style="margin-top:12px"><button data-line="${c.id}" aria-pressed="${mode==='line'&&focus===c.id}">${tr('Только его линия','Only its line')}</button><button data-fav="${c.id}" aria-pressed="${favs.has(c.id)}">${favs.has(c.id)?tr('★ В избранном','★ Favourite'):tr('☆ В избранное','☆ Favourite')}</button><button data-pet="${c.id}" aria-pressed="${pet===c.id}">${pet===c.id?tr('♥ Любимчик','♥ Pet cat'):tr('♡ В любимчики','♡ Make pet cat')}</button></div>
+    <h3>${tr('Статы','Stats')} <span style="text-transform:none;letter-spacing:0">${tr('(база + прокачка/травмы)','(base + levelling / injuries)')}</span></h3><div class="stats">${statRows(c)}</div>
+    <h3>${tr('Способности','Abilities')}</h3><div class="spells">
+      ${spell(c.basic,'item',`<em>${tr('атака','attack')}</em>`)}
+      ${c.act.map(k=>spell(k,'',innate.has(k)?`<em>${tr('врождённая','innate')}</em>`:'')).join('')}
+      ${c.inn.filter(k=>!c.act.includes(k)).map(k=>spell(k,'passive',`<em>${tr('врождённая, не в слоте','innate, not slotted')}</em>`)).join('')}
+      ${c.pas.map(k=>{const t=k.split(':').pop();return spell(k,'passive',`<em>${L(k)[2]?tr('расстройство','disorder'):tr('пассивка','passive')}${+t>1?' '+t:''}</em>`)}).join('')}
+      ${c.act.length+c.pas.length===0?`<span class="hint">${tr('Ничего, кроме базовой атаки','Nothing but the basic attack')}</span>`:''}</div>
+    ${c.mut.length?`<h3>${tr('Мутации','Mutations')} · ${c.mut.length}</h3><div class="spells">${c.mut.map(m=>`<div class="spell ${m[4]?'dis':'mutx'}"><div class="st"><b>${esc(MN(m)||SLOT_RU[m[0]])}</b><em>${SLOT_RU[m[0]]}${m[4]?' · '+tr('дефект','defect'):''}</em>${MD(m)?`<span>${rich(MD(m))}</span>`:''}</div></div>`).join('')}</div>`:''}
+    ${c.items.length?`<h3>${tr('Снаряжение','Equipment')}</h3><div class="spells">${c.items.map(k=>spell(k,'item')).join('')}</div>`:''}
+    <h3>${tr('Досье','Dossier')}</h3><div class="recs">
+      <div class="rec"><b>${c.born>=0?c.born:'—'}</b><span>${tr('день рождения','day of birth')}</span></div>
+      <div class="rec"><b>${c.st==='house'&&age!=null?age:'—'}</b><span>${c.st==='house'?tr('дней от роду','days old'):tr('возраст неизвестен','age unknown')}</span></div>
+      <div class="rec"><b>${c.lvl}</b><span>${tr('уровень','level')}</span></div>
+      <div class="rec"><b>${c.kids.length}</b><span>${tr('котят','kittens')}</span></div>
+      <div class="rec"><b>${c.nDesc}</b><span>${tr('потомков','descendants')}</span></div>
+      <div class="rec"><b>${anc(c.id).size}</b><span>${tr('предков','ancestors')}</span></div></div>
+    <h3>${tr('Родители','Parents')}</h3><div class="links">${c.p.length?c.p.map(linkBtn).join(''):`<span class="hint">${tr('Бродяга, родители неизвестны','A stray, parents unknown')}</span>`}</div>
+    <h3>${tr('Котята','Kittens')} · ${c.kids.length}</h3><div class="links">${c.kids.length?c.kids.map(linkBtn).join(''):`<span class="hint">${tr('Нет','None')}</span>`}</div>
+    ${shown.has(c.id)?'':`<div class="warnbox">${tr('Этого кота нет на графе в текущем режиме.','This cat is not on the graph in the current view.')}</div>`}`;
+}
+panel.addEventListener('click',e=>{const z=e.target.closest('[data-zoom]');if(z){zoomCat(cats[+z.dataset.zoom]);return}
+  const fv=e.target.closest('[data-fav]');if(fv){toggleFav(+fv.dataset.fav);return}
+  const pt=e.target.closest('[data-pet]');if(pt){setPet(+pt.dataset.pet);return}
+  const ln=e.target.closest('[data-line]');if(ln){const id=+ln.dataset.line;if(mode==='line'&&focus===id){setMode('fam');center(id)}else{focus=id;sel=id;setMode('line')}return}
+  const b=e.target.closest('[data-go]');if(!b)return;const id=+b.dataset.go;if(pairMode)togglePair();go(id)});
+
+// ---------- pan / zoom ----------
+let T={x:0,y:0,k:1};
+const draw=()=>{world.setAttribute('transform',`translate(${T.x},${T.y}) scale(${T.k})`);svg.classList.toggle('far',T.k<.42)};
+function bounds(){const xs=[],ys=[];for(const n in pos_){xs.push(pos_[n].x);ys.push(pos_[n].y)}
+  return xs.length?{x0:Math.min(...xs)-W/2-10,x1:Math.max(...xs)+W/2+10,y0:Math.min(...ys)-H/2-10,y1:Math.max(...ys)+H/2+10}:{x0:0,x1:1,y0:0,y1:1}}
+function fit(){const r=svg.getBoundingClientRect(),b=bounds();T.k=Math.min(r.width/(b.x1-b.x0),r.height/(b.y1-b.y0),1.1)*.95;
+  T.x=r.width/2-(b.x0+b.x1)/2*T.k;T.y=r.height/2-(b.y0+b.y1)/2*T.k;draw()}
+function center(id){const p=pos_[id];if(!p)return;const r=svg.getBoundingClientRect();T.k=Math.max(T.k,.75);T.x=r.width/2-p.x*T.k;T.y=r.height/2-p.y*T.k;draw()}
+function zoomAt(px,py,f){const k=Math.min(3,Math.max(.05,T.k*f));T.x=px-(px-T.x)*k/T.k;T.y=py-(py-T.y)*k/T.k;T.k=k;draw()}
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*.0015))},{passive:false});
+const ptrs=new Map();let moved=0,downNode=null,pinch=null;
+svg.addEventListener('pointerdown',e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=0;
+  downNode=ptrs.size===1?e.target.closest('.node'):null;svg.classList.add('drag');
+  if(ptrs.size===2){const[a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y)}}});
+svg.addEventListener('pointermove',e=>{const p=ptrs.get(e.pointerId);if(!p)return;const dx=e.clientX-p.x,dy=e.clientY-p.y;moved+=Math.abs(dx)+Math.abs(dy);
+  if(ptrs.size===1){T.x+=dx;T.y+=dy;draw()}p.x=e.clientX;p.y=e.clientY;
+  if(ptrs.size===2&&pinch){const[a,b]=[...ptrs.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);const r=svg.getBoundingClientRect();zoomAt((a.x+b.x)/2-r.left,(a.y+b.y)/2-r.top,d/pinch.d);pinch.d=d}});
+const up=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;if(!ptrs.size){svg.classList.remove('drag');
+  if(downNode&&moved<8)tapNode(+downNode.dataset.id);else if(!downNode&&moved<8&&!pairMode){sel=null;apply()}downNode=null}};
+svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
+nodesG.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tapNode(+e.target.closest('.node').dataset.id)}});
+
+function tapNode(id){if(pairMode){const i=pick.indexOf(id);if(i>=0)pick.splice(i,1);else{if(pick.length===2)pick.shift();pick.push(id)}apply()}else{sel=id;apply()}}
+function go(id){if(!shown.has(id)){setMode('fam');if(!shown.has(id))setMode('all')}sel=id;apply();center(id)}
+function togglePair(){pairMode=!pairMode;pick=pairMode&&sel!=null?[sel]:[];document.getElementById('pairBtn').setAttribute('aria-pressed',pairMode);apply()}
+function setMode(m){mode=m;const lb=document.getElementById('lineBtn');lb.hidden=focus==null;if(focus!=null)lb.textContent=tr('Линия: ','Line: ')+cats[focus].n;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===m));layout()}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+document.getElementById('pairBtn').onclick=togglePair;
+document.getElementById('deadBtn').onclick=e=>{muteGone=!muteGone;e.currentTarget.setAttribute('aria-pressed',muteGone);apply()};
+document.getElementById('fitBtn').onclick=fit;
+document.getElementById('pet').onclick=()=>{if(pet!=null){if(pairMode)togglePair();go(pet)}};
+renderPet();
+// ---------- fun stats: everything here is counted from the save, nothing is made up ----------
+const fun=document.getElementById('fun');
+function funHtml(){
+  const cat=n=>P(n,'cat'),ucat=n=>P(n,'ofcat');
+  const tot=c=>c.base.map((b,i)=>b+c.bonus[i]),sum=a=>a.reduce((x,y)=>x+y,0),pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  const house=all.filter(c=>c.st==='house'),dead=all.filter(c=>c.st==='dead'),gone=all.filter(c=>c.st==='gone');
+  const cnt=(arr,f)=>{const m=new Map();arr.forEach(x=>{[].concat(f(x)).forEach(k=>{if(k!=null&&k!=='')m.set(k,(m.get(k)||0)+1)})});return[...m].sort((a,b)=>b[1]-a[1])};
+  const mates=c=>{const s=new Set();c.kids.forEach(k=>cats[k].p.forEach(p=>p!==c.id&&s.add(p)));return s.size};
+  const dis=c=>c.pas.filter(k=>L(k)[2]).length,defs=c=>c.mut.filter(m=>m[4]).length;
+  const own=c=>c.items.filter(k=>!L(k)[3]);                       // without the class gear a cat cannot take off
+  const mean=STATN.map((_,i)=>sum(all.map(c=>tot(c)[i]))/all.length);
+  const dist=c=>Math.sqrt(sum(tot(c).map((v,i)=>(v-mean[i])**2)));
+  const fans={},foes={};all.forEach(c=>{if(cats[c.lover])fans[c.lover]=(fans[c.lover]||0)+1;if(cats[c.hater])foes[c.hater]=(foes[c.hater]||0)+1});
+  const virgin=c=>!c.kids.length&&c.lover==null;                  // no kittens and never paired up
+  const kinOf=c=>new Set([...c.p,...c.kids,...c.p.flatMap(p=>cats[p].kids)]);
+  const st=i=>FULLSTAT[i].toLowerCase();
+  // awards: [title, what it is + a joke, pool, score (bigger wins), text, minimum score to be shown]
+  const A=[
+   [tr('Ходячая травма','Walking injury'),tr('больше всех потерял статов от травм. Живого места нет','lost the most stats to injuries. Not a healthy spot left'),all,c=>-c.inj,c=>tr(`−${-c.inj} к статам`,`−${-c.inj} to stats`),1],
+   [tr('Чернобыль','Chernobyl'),tr('больше всех мутаций. Светится в темноте','the most mutations. Glows in the dark'),all,c=>c.mut.length,c=>P(c.mut.length,'mut'),1],
+   [tr('Бракованный','Factory reject'),tr('больше всех врождённых дефектов. Возврату не подлежит','the most birth defects. No refunds'),all,defs,c=>P(defs(c),'defect'),1],
+   [tr('Букет диагнозов','Collect them all'),tr('больше всех расстройств. Психиатр ушёл в отпуск','the most disorders. The therapist took a holiday'),all,dis,c=>P(dis(c),'dis'),1],
+   [tr('Габсбург','Habsburg'),tr('самый высокий инбридинг. Семейное древо — это круг','the highest inbreeding. The family tree is a circle'),all,c=>c.coi,c=>(c.coi*100).toFixed(1)+'%',.0001],
+   [tr('Ловелас','Casanova'),tr('дети от самого большого числа партнёров. Алименты не платит','kittens with the most partners. Pays no child support'),all,mates,c=>P(mates(c),'mate'),2],
+   [tr('Родитель года','Parent of the year'),tr('больше всех котят. Имена уже не помнит','the most kittens. Lost track of their names'),all,c=>c.kids.length,c=>P(c.kids.length,'kitten'),1],
+   [tr('Основатель династии','Dynasty founder'),tr('больше всех потомков. Полколонии — его родня','the most descendants. Half the colony is family'),all,c=>c.nDesc,c=>P(c.nDesc,'desc'),1],
+   [tr('Сердцеед','Heartbreaker'),tr('в него влюблено больше всего котов. Отбоя нет','the most cats are in love with this one. Take a number'),all,c=>fans[c.id]||0,c=>tr('сохнут ','loved by ')+ucat(fans[c.id]),2],
+   [tr('Враг народа','Public enemy'),tr('его ненавидит больше всего котов. Заслужил','the most cats hate this one. Earned it'),all,c=>foes[c.id]||0,c=>tr('бесит ','hated by ')+ucat(foes[c.id]),2],
+   [tr('Озабоченный','Down bad'),tr('самое высокое либидо. Спрячьте подушки','the highest libido. Hide the pillows'),all,c=>c.lib??-1,c=>tr('либидо ','libido ')+c.lib.toFixed(2),0],
+   [tr('Не сегодня, дорогая','Not tonight, dear'),tr('самое низкое либидо. Голова болит','the lowest libido. Has a headache'),all,c=>c.lib==null?-9:-c.lib,c=>tr('либидо ','libido ')+c.lib.toFixed(2),-1],
+   [tr('Гопник','Street thug'),tr('самая высокая агрессия. Есть чё?','the highest aggression. You got a problem?'),all,c=>c.agg??-1,c=>tr('агрессия ','aggression ')+c.agg.toFixed(2),0],
+   [tr('Божий одуванчик','Cinnamon roll'),tr('самая низкая агрессия. Мухи не обидит','the lowest aggression. Would not hurt a fly'),all,c=>c.agg==null?-9:-c.agg,c=>tr('агрессия ','aggression ')+c.agg.toFixed(2),-1],
+   [tr('Качок','Gym rat'),tr('самая большая сила. Жмёт сотку','the highest strength. Never skips arm day'),all,c=>tot(c)[0],c=>st(0)+' '+tot(c)[0],-99],
+   [tr('Дрыщ','Noodle arms'),tr('самая маленькая сила. Мышь его побьёт','the lowest strength. Loses to a mouse'),all,c=>-tot(c)[0],c=>st(0)+' '+tot(c)[0],-99],
+   [tr('Гений','Big brain'),tr('самый умный. Умнее хозяина','the smartest. Smarter than the owner'),all,c=>tot(c)[3],c=>st(3)+' '+tot(c)[3],-99],
+   [tr('Одна извилина','One brain cell'),tr('самый глупый. И та прямая','the dumbest. And it is on break'),all,c=>-tot(c)[3],c=>st(3)+' '+tot(c)[3],-99],
+   [tr('Шило в попе','Zoomies'),tr('самый быстрый. Уже убежал','the fastest. Already gone'),all,c=>tot(c)[4],c=>st(4)+' '+tot(c)[4],-99],
+   [tr('Тормоз','Still loading'),tr('самый медленный. Загрузка…','the slowest. Buffering…'),all,c=>-tot(c)[4],c=>st(4)+' '+tot(c)[4],-99],
+   [tr('Красавчик','Main character'),tr('самая высокая харизма. Хоть на аву','the highest charisma. Profile picture material'),all,c=>tot(c)[5],c=>st(5)+' '+tot(c)[5],-99],
+   [tr('На любителя','Acquired taste'),tr('самая низкая харизма. Мама всё равно любит','the lowest charisma. Mom still loves it'),all,c=>-tot(c)[5],c=>st(5)+' '+tot(c)[5],-99],
+   [tr('Везунчик','Lucky charm'),tr('самая высокая удача. Родился в рубашке','the highest luck. Born under a lucky star'),all,c=>tot(c)[6],c=>st(6)+' '+tot(c)[6],-99],
+   [tr('Чёрная полоса','Black cat energy'),tr('самая низкая удача. Бутерброд всегда маслом вниз','the lowest luck. The toast always lands butter side down'),all,c=>-tot(c)[6],c=>st(6)+' '+tot(c)[6],-99],
+   [tr('Золотой ребёнок','Golden child'),tr('лучшие базовые статы. Гордость селекции','the best base stats. Pride of the breeding program'),all,c=>sum(c.base),c=>tr('сумма ','total ')+sum(c.base),-99],
+   [tr('Позор семьи','Family disappointment'),tr('худшие базовые статы. В семье не без урода','the worst base stats. Every family has one'),all,c=>-sum(c.base),c=>tr('сумма ','total ')+sum(c.base),-99],
+   [tr('Серая мышь','Background NPC'),tr('ближе всех к среднему коту. NPC среди котов','the closest to the average cat. An NPC among cats'),all,c=>-dist(c),c=>tr('отклонение ','deviation ')+dist(c).toFixed(1),-99],
+   [tr('Старожил','Old-timer'),tr('дольше всех живёт в доме. Помнит ещё первых','has lived in the house the longest. Remembers the founders'),house,c=>ageOf(c)??-1,c=>P(ageOf(c),'day'),1],
+   [tr('Барахольщик','Hoarder'),tr('больше всех вещей на себе (классовое не в счёт). Всё своё ношу с собой','carries the most items (class gear not counted). Wears the whole closet'),all,c=>own(c).length,c=>P(own(c).length,'item'),2],
+   [tr('Язык сломаешь','Tongue twister'),tr('самое длинное имя. Хозяин, ты в порядке?','the longest name. Owner, are you okay?'),all,c=>c.n.length,c=>P(c.n.length,'letter'),1],
+  ];
+  const cards=A.map(([t,j,pool,f,txt,min])=>{if(!pool.length)return'';const c=pool.reduce((a,b)=>f(b)>f(a)?b:a);if(f(c)<min)return'';
+    return`<button class="aw" data-go="${c.id}"><svg viewBox="0 0 64 64" aria-hidden="true">${catIcon(c)}</svg><span><b>${t}</b><em>${esc(c.n)}</em><i>${txt(c)}</i><small>${j}</small></span></button>`}).join('');
+  let N=[];const add=(v,l)=>{if(v!=null&&v!=='')N.push(`<div class="rec"><b>${v}</b><span>${l}</span></div>`)};
+  const sec=t=>{const h=N.length?`<h3>${t}</h3><div class="recs funrecs">${N.join('')}</div>`:'';N=[];return h};
+  const F=DATA.fun||{},NPC=DATA.npc||{};
+  // --- the colony
+  add(all.length,tr('котов прошло через эту мясорубку','cats went through this meat grinder'));
+  add(pct(dead.length,all.length),tr(`смертность: погибло ${dead.length}. Press F`,`death rate: ${dead.length} dead. Press F`));
+  add(gone.length,tr('вовремя свалили живыми','got out alive while they could'));
+  add(DATA.day?(all.length/DATA.day).toFixed(1):null,tr('новых котов в день. Конвейер','new cats per day. An assembly line'));
+  add(all.filter(c=>c.p.length).length,tr('сделано в доме','home-made'));
+  add(all.filter(c=>!c.p.length).length,tr('подобрано на улице','picked up off the street'));
+  const inb=all.filter(c=>c.coi>0).length;add(`${inb} · ${pct(inb,all.length)}`,tr('котов с инбридингом. Алабама одобряет','inbred cats. Alabama approves'));
+  const sib=all.filter(c=>{if(c.p.length<2)return false;const [a,b]=c.p.map(p=>cats[p]);return a.p.some(x=>b.p.includes(x))||a.p.includes(b.id)||b.p.includes(a.id)}).length;
+  add(sib,tr('дети брата с сестрой или родителя с ребёнком. Без комментариев','kittens of siblings or of a parent and its child. No comment'));
+  add(Math.max(...all.map(c=>c.gen)),tr('поколений в самой длинной линии. Династия','generations in the longest line. A dynasty'));
+  add(`${all.filter(c=>c.sex===0).length} / ${all.filter(c=>c.sex===1).length} / ${all.filter(c=>c.sex===2).length}`,tr('котов / кошек / пол ?','males / females / sex ?'));
+  const byCls=cnt(all,c=>clsName(c));if(byCls.length)add(esc(byCls[0][0]),tr('самый попсовый класс: ','the most basic class: ')+cat(byCls[0][1]));
+  const rate=byCls.filter(([k,n])=>n>=5).map(([k,n])=>[k,all.filter(c=>clsName(c)===k&&c.st==='dead').length/n,n]).sort((a,b)=>b[1]-a[1]);
+  if(rate.length>1){add(esc(rate[0][0]),tr(`класс-смертник: погибли ${Math.round(rate[0][1]*100)}% из ${rate[0][2]}`,`the suicide class: ${Math.round(rate[0][1]*100)}% of ${rate[0][2]} died`));
+    const s=rate[rate.length-1];add(esc(s[0]),tr(`класс-таракан: погибли всего ${Math.round(s[1]*100)}% из ${s[2]}`,`the cockroach class: only ${Math.round(s[1]*100)}% of ${s[2]} died`))}
+  const dz=cnt(all,c=>c.pas.filter(k=>L(k)[2]).map(k=>L(k)[0]));if(dz.length)add(esc(dz[0][0]),tr(`главная болячка колонии: у ${ucat(dz[0][1])}`,`the colony's favourite illness: ${cat(dz[0][1])} have it`));
+  const ps=cnt(all,c=>c.pas.filter(k=>!L(k)[2]).map(k=>L(k)[0]));if(ps.length)add(esc(ps[0][0]),tr(`пассивка-мейнстрим: у ${ucat(ps[0][1])}`,`the mainstream passive: ${cat(ps[0][1])} have it`));
+  const it=cnt(all,c=>[...new Set(own(c))].map(k=>L(k)[0]));if(it.length)add(esc(it[0][0]),tr(`самый ходовой шмот (классовое не в счёт): у ${ucat(it[0][1])}`,`the hottest drip (class gear not counted): on ${cat(it[0][1])}`));
+  const mu=cnt(all,c=>c.mut.filter(m=>MN(m)).map(m=>MN(m)));if(mu.length)add(esc(mu[0][0]),tr(`самая модная мутация: у ${ucat(mu[0][1])}`,`the trendiest mutation: ${cat(mu[0][1])} have it`));
+  add(all.filter(c=>c.mut.length).length,tr('котов-мутантов','mutant cats'));
+  const vo=cnt(all,c=>c.voice);if(vo.length)add(vo[0][1],tr(`котов орут одним и тем же голосом (${esc(vo[0][0])}). Клоны?`,`cats scream in the very same voice (${esc(vo[0][0])}). Clones?`));
+  const lt=cnt(all,c=>c.n.trim()[0]?.toUpperCase());if(lt.length)add(esc(lt[0][0]),tr('любимая первая буква имени: ','favourite first letter of a name: ')+cat(lt[0][1]));
+  const bd=cnt(all.filter(c=>c.born>=0),c=>c.born);if(bd.length)add(tr('день ','day ')+bd[0][0],tr('беби-бум: появилось ','baby boom: ')+cat(bd[0][1])+tr('',' showed up'));
+  add(mean.map((v,i)=>`<span style="white-space:nowrap">${ico(DATA.statIcons&&DATA.statIcons[i],13)||STATN[i][0]}${v.toFixed(1)}</span>`).join(' '),tr('среднестатистический Васька','your average Joe the cat'));
+  add(F.birds,tr('бонусных птиц отправлено на тот свет','bonus birds sent to a better place'));add(F.flush,tr('раз смыт унитаз. Чистюля','toilet flushes. So hygienic'));add(F.scum,tr('раз Стивен спалил сейвскам. Не стыдно?','times Steven caught you save scumming. No shame?'));
+  add(F.gold,tr('золота в заначке','gold in the stash'));add(F.food,tr('еды в закромах','food in the pantry'));add(F.furn,tr('предметов мебели натаскано','pieces of furniture dragged in'));add(F.pct!=null?F.pct+'%':null,tr('игры пройдено','of the game completed'));
+  const colony=sec(tr('Колония в цифрах','The colony in numbers'));
+  // --- love life (the game calls sexuality < 0.1 straight, > 0.9 gay, the rest bi)
+  const known=all.filter(c=>c.sx!=null),gay=known.filter(c=>c.sx>.9),bi=known.filter(c=>c.sx>=.1&&c.sx<=.9);
+  if(known.length){
+    add(`${known.length-gay.length-bi.length} / ${bi.length} / ${gay.length}`,tr('натуралов / би / геев. Гейдар Тинка не врёт','straight / bi / gay. Tink\'s gaydar never lies'));
+    const dv=dead.filter(virgin).length;add(`${dv} · ${pct(dv,dead.length)}`,tr('погибли девственниками: ни котят, ни пары. Press F','died virgins: no kittens, no partner. Press F'));
+    add(gone.filter(virgin).length,tr('ушли из дома, так и не познав любви','left the house without ever knowing love'));
+    add(house.filter(virgin).length,tr('девственников в доме прямо сейчас','virgins in the house right now'));
+    const g0=gay.filter(c=>!c.kids.length).length;
+    add(tr(`${g0} из ${gay.length}`,`${g0} of ${gay.length}`),tr('геев не оставили котят. Род прервался из-за ориентации','gay cats left no kittens. The bloodline ended with them'));
+    add(gay.length-g0,tr('геев всё-таки стали родителями. Есть вопросы','gay cats became parents anyway. Questions were asked'));
+    const loving=all.filter(c=>cats[c.lover]);add(loving.length,tr('котов в кого-то влюблены','cats are in love with someone'));
+    add(loving.filter(c=>cats[c.lover].lover===c.id&&c.id<c.lover).length,tr('взаимных пар. Совет да любовь','mutual couples. How sweet'));
+    add(loving.filter(c=>cats[c.lover].lover!==c.id).length,tr('безответно влюблённых. Френдзона','cats in unrequited love. Friendzoned'));
+    add(loving.filter(c=>c.st==='house'&&cats[c.lover].st==='dead').length||null,tr('котов в доме любят покойника','cats at home love someone who is dead'));
+    add(loving.filter(c=>c.st==='house'&&cats[c.lover].st==='gone').length||null,tr('котов в доме любят того, кого ты отдал. Монстр','cats at home love someone you gave away. You monster'));
+    add(loving.filter(c=>kinOf(c).has(c.lover)).length,tr('влюблены в родителя, ребёнка, брата или сестру. Sweet home Alabama','in love with a parent, a child or a sibling. Sweet home Alabama'));
+    add(loving.filter(c=>c.lover===c.hater).length||null,tr('любят и ненавидят одного и того же кота. Сложные отношения','love and hate the very same cat. It\'s complicated'));
+    const hating=all.filter(c=>cats[c.hater]);add(hating.length,tr('котов кого-то люто ненавидят','cats hate someone\'s guts'));
+    add(hating.filter(c=>cats[c.hater].hater===c.id&&c.id<c.hater).length,tr('пар взаимной ненависти','pairs of mutual hatred'));
+  }
+  const love=sec(tr('Личная жизнь','Love life'));
+  // --- where they went (status flags)
+  const bit=(c,b)=>(c.fl||0)>>b&1;
+  if(all.some(c=>c.fl)){
+    const fight=dead.filter(c=>bit(c,18)).length,old=dead.filter(c=>bit(c,10)).length;
+    add(fight,tr('полегли в бою','fell in battle'));add(old,tr('умерли от старости. Повезло','died of old age. Lucky them'));
+    add(dead.length-dead.filter(c=>bit(c,18)||bit(c,10)).length,tr('погибли иначе: не в бою и не от старости. Несчастный случай, ага','died some other way: not in battle, not of old age. An "accident", sure'));
+    for(let b=11;b<=17;b++){const n=all.filter(c=>bit(c,b)).length;if(n)add(n,tr('отдано: ','given to: ')+esc(NPC[b]||'NPC'))}
+    add(house.filter(c=>bit(c,1)).length||null,tr('пенсионеров в доме (в походы больше не ходят)','retirees at home (no more adventures)'));
+  }
+  const fates=sec(tr('Куда они все делись','Where did they all go'));
+  return`<div class="funbox"><button class="x" data-close>${tr('Закрыть','Close')}</button><h2>${tr('Приколы колонии','Colony fun stats')}</h2>
+    ${colony}${love}${fates}
+    <h3>${tr('Доска почёта и позора','Wall of fame and shame')}</h3><div class="aws">${cards}</div>
+    <p class="hint">${tr('Всё посчитано из сейва. При равенстве показан первый по списку. Клик по коту открывает его на древе.','Everything is counted from the save. On a tie the first one in the list is shown. Click a cat to open it on the tree.')}</p></div>`}
+function toggleFun(show){fun.hidden=!show;fun.innerHTML=show?funHtml():'';document.getElementById('funBtn').setAttribute('aria-pressed',show)}
+document.getElementById('funBtn').onclick=()=>toggleFun(fun.hidden);
+fun.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g){toggleFun(false);if(pairMode)togglePair();go(+g.dataset.go);return}
+  if(e.target===fun||e.target.closest('[data-close]'))toggleFun(false)});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&!fun.hidden)toggleFun(false)});
+// settings: remembered in this browser; an option whose game art is missing is shown disabled
+const setBtn=document.getElementById('setBtn'),setBox=document.getElementById('settings');
+function applyOpt(k){
+  if(!k||k==='wall')svg.classList.toggle('wall',on('wall'));
+  if(k==='faces'||k==='stats'){sizeNodes();const t={...T};layout();T=t;draw()}
+  if(k==='full')renderPanel();
+  if(!k||k==='font'){const st=document.getElementById('gamefont');if(st)st.disabled=!on('font')}}
+setBox.querySelectorAll('[data-opt]').forEach(i=>{const k=i.dataset.opt;i.checked=on(k);i.disabled=!HAS[k];i.closest('label').classList.toggle('off',!HAS[k]);
+  i.onchange=()=>{opt[k]=i.checked;try{localStorage.setItem('mewtree.opt',JSON.stringify(opt))}catch(e){}applyOpt(k)}});
+setBtn.onclick=()=>{setBox.hidden=!setBox.hidden;setBtn.setAttribute('aria-pressed',!setBox.hidden)};
+addEventListener('pointerdown',e=>{if(!setBox.hidden&&!e.target.closest('#settings,#setBtn')){setBox.hidden=true;setBtn.setAttribute('aria-pressed',false)}});
+applyOpt();
+document.getElementById('names').innerHTML=all.map(c=>`<option value="${esc(c.n)}">`).join('');
+document.getElementById('q').addEventListener('change',e=>{const v=e.target.value.trim().toLowerCase();if(!v)return;
+  const c=all.find(c=>c.n.toLowerCase()===v)||all.find(c=>c.n.toLowerCase().startsWith(v))||all.find(c=>c.n.toLowerCase().includes(v));if(c){if(pairMode)togglePair();e.target.value='';e.target.blur();go(c.id)}});
+if(all.some(c=>c.sx!=null))document.getElementById('lgFlags').outerHTML=[0,1,2].map(o=>`<span>${flag(o,17,11)}${ORI_L[o]}</span>`).join('');
+const saveSel=document.getElementById('saveSel');
+if(ALL.saves.length>1){saveSel.hidden=false;
+  const pad=n=>String(n).padStart(2,'0');
+  const saveLabel=s=>{const l=s.label;if(!l||typeof l==='string')return l||s.save;const d=new Date((l.mtime||0)*1000);
+    return[l.account||(l.steamid?'Steam '+l.steamid:''),l.file+(l.test?tr(' [тест]',' [test]'):'')+(l.proton?' [Proton]':''),
+      l.mtime?`${pad(d.getDate())}.${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`:'',
+      l.day!=null?tr('день ','day ')+l.day+(l.house!=null?tr(', дома ',', at home ')+l.house:''):''].filter(Boolean).join(' · ')};
+  saveSel.innerHTML=ALL.saves.map(s=>`<option value="${esc(s.saveKey)}"${s.saveKey===DATA.saveKey?' selected':''}>${esc(saveLabel(s))}</option>`).join('');
+  saveSel.onchange=()=>{try{localStorage.setItem('mewtree.save',saveSel.value)}catch(e){}location.reload()}}
+document.getElementById('meta').textContent=`${ALL.saves.length>1?'':DATA.save+' · '}${tr('день','day')} ${DATA.day??'?'} · ${P(all.length,'cat')} · ${tr('собрано','built')} ${DATA.built}`;
+document.getElementById('ver').textContent='MewTree '+(ALL.ver||'');
+const langSel=document.getElementById('langSel');langSel.value=LANG;
+langSel.onchange=()=>{try{localStorage.setItem('mewtree.lang',langSel.value)}catch(e){}location.reload()};
+window.addEventListener('resize',()=>fit());
+layout();
+</script>
+</body>
+</html>
