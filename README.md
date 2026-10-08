@@ -64,13 +64,19 @@ MewTree.exe --gpak PATH   path to resources.gpak
 Environment variables: `STEAM_DIR`, `MEWGENICS_SAVES` (the folder that holds
 `<SteamID>\saves`), `MEWGENICS_GPAK`, `MEWTREE_LANG` (`ru` / `en`, console language).
 
-### From source
+### From source (Windows, Linux, Steam Deck, macOS)
+
+The repository holds the sources in `src/` and the launch scripts next to them:
 
 ```
-python build_tree.py --watch
+run.bat          Windows: build the page and watch the saves
+./run.sh         Linux / Steam Deck / macOS: the same
+build_exe.bat    Windows: make MewTree.exe with PyInstaller
 ```
 
-No third-party packages are needed. `build_exe.bat` makes `MewTree.exe` with PyInstaller.
+Only Python 3.10+ is needed, no third-party packages. On Linux the saves are looked up in the
+Proton prefixes of every Steam library (`steamapps/compatdata/*/pfx/...`). The scripts take
+the same options as the exe, e.g. `./run.sh --list`. The page lands next to the scripts.
 
 ## Uninstall
 
@@ -165,6 +171,10 @@ MewTree читает сейв Mewgenics и собирает одну веб-ст
 
 Windows может ругнуться на неизвестного издателя: exe не подписан. Если не доверяешь,
 собери его сам из исходников (`build_exe.bat`).
+
+**Linux / Steam Deck / macOS и запуск из исходников.** В репозитории исходники лежат в `src/`,
+рядом скрипты: `run.bat` (Windows), `./run.sh` (Linux / Steam Deck / macOS) и `build_exe.bat`
+(собрать `MewTree.exe`). Нужен только Python 3.10+, сторонних пакетов нет.
 
 Команды: `--list` (где искал и что нашёл), `--pick` (выбрать сейв в консоли),
 `--save ПУТЬ`, `--gpak ПУТЬ`. Переменные окружения: `STEAM_DIR`, `MEWGENICS_SAVES`,

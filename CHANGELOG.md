@@ -16,3 +16,4 @@ First public release. Tested on Mewgenics 1.1.
 - Game wallpaper, font and icons; settings to turn the heavy parts off.
 - All saves and Steam accounts on one page with a switcher.
 - English and Russian.
+- Windows exe, plus run.bat / run.sh to run from source on Windows, Linux, Steam Deck and macOS.

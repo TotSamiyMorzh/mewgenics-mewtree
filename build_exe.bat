@@ -10,7 +10,7 @@ echo [1/2] Installing PyInstaller...
 %PY% -m pip install --user --upgrade pyinstaller
 if errorlevel 1 goto :fail
 echo [2/2] Building MewTree.exe, this takes a minute or two...
-%PY% -m PyInstaller --noconfirm --onefile --console --name MewTree --add-data "%~dp0template.html;." --hidden-import mewsave --hidden-import locate --hidden-import catface --hidden-import mewfont --distpath "%~dp0." --workpath "%~dp0build" --specpath "%~dp0build" "%~dp0build_tree.py"
+%PY% -m PyInstaller --noconfirm --onefile --console --name MewTree --add-data "%~dp0src\template.html;." --paths "%~dp0src" --hidden-import mewsave --hidden-import locate --hidden-import catface --hidden-import mewfont --distpath "%~dp0." --workpath "%~dp0build" --specpath "%~dp0build" "%~dp0src\build_tree.py"
 if errorlevel 1 goto :fail
 rmdir /s /q "%~dp0build" >nul 2>nul
 echo.

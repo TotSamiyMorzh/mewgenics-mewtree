@@ -1,10 +1,10 @@
 """Mewgenics family tree -> one self-contained HTML page.
 
-    python build_tree.py                 # finds the save, opens the page in a browser
-    python build_tree.py --watch         # rebuild whenever the game writes the save
-    python build_tree.py --pick          # choose another account / save (remembered)
-    python build_tree.py --list          # show every save that was found
-    python build_tree.py --save X.sav --out tree.html --no-open
+    python src/build_tree.py                 # finds the save, opens the page in a browser
+    python src/build_tree.py --watch         # rebuild whenever the game writes the save (run.bat / run.sh do this)
+    python src/build_tree.py --pick          # choose another account / save (remembered)
+    python src/build_tree.py --list          # show every save that was found
+    python src/build_tree.py --save X.sav --out tree.html --no-open
     MewTree.exe                          # same as --watch; drag a .sav onto it to use that one
 
 Reads a COPY of the save (never writes it). If the game folder is found, Russian
@@ -39,7 +39,8 @@ LANG = os_lang()
 tr = lambda ru, en: ru if LANG == "ru" else en
 HERE = Path(__file__).resolve().parent
 RES = Path(getattr(sys, "_MEIPASS", HERE))                    # bundled template.html
-APP = Path(sys.executable).resolve().parent if FROZEN else HERE   # where output + settings live
+# where output + settings live: next to the exe, or next to the launch scripts (one level above src/)
+APP = Path(sys.executable).resolve().parent if FROZEN else (HERE.parent if HERE.name == "src" else HERE)
 sys.path.insert(0, str(HERE))
 import mewsave, locate, catface, mewfont
 
