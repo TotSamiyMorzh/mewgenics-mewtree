@@ -9,6 +9,14 @@ inbreeding, stats, abilities, mutations and a pile of silly statistics.
 It is **not a game mod**: nothing is injected and no game file is changed. It is a small
 program next to the game that only *reads a copy* of the save.
 
+![The family tree with a cat selected](docs/tree.png)
+
+| | |
+|---|---|
+| ![A cat's panel: stats, abilities, where it went](docs/cat.png) | ![Compare a pair: inbreeding and common ancestors](docs/pair.png) |
+| ![Fun stats: the colony in numbers](docs/fun.png) | ![Wall of fame and shame](docs/awards.png) |
+| ![The whole cat in the game's frame](docs/big.png) | ![The Russian version](docs/tree_ru.png) |
+
 ## What you get
 
 - **The whole tree.** Lines of the cats at home, all families, or every cat. Click a cat to
@@ -130,6 +138,8 @@ MewTree читает сейв Mewgenics и собирает одну веб-ст
 
 Это **не мод**: в игру ничего не внедряется и файлы игры не меняются. Это программка рядом
 с игрой, которая только *читает копию* сейва.
+
+![Древо с выбранным котом](docs/tree_ru.png)
 
 ## Что умеет
 
