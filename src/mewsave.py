@@ -13,7 +13,7 @@ mewgenics-cat-bridge's in-memory structs (CatData / CampaignStats):
   · equipment … · class str · level u32 · … · birthday i64
 `dead` matches the house roster exactly (all 18 house cats dead=0).
 """
-import sqlite3, struct, shutil, tempfile, os
+import sqlite3, struct, shutil, tempfile, os, re
 
 STATS = ("str", "dex", "con", "int", "spd", "cha", "lck")
 PARTS = ("body", "head", "tail", "leg1", "leg2", "arm1", "arm2", "lefteye", "righteye",
@@ -102,8 +102,17 @@ def read_save(path):
             except Exception as e: errors.append((k, str(e)))
         files = dict(db.execute("select key, data from files"))
         props = dict(db.execute("select key, data from properties"))
-        try: furniture = db.execute("select count(*) from furniture").fetchone()[0]
-        except sqlite3.Error: furniture = None
+        # each furniture row is one blob holding two identifiers: the furniture key and the room
+        # it stands in. They are the only identifier-shaped runs in the blob (positions vary), so
+        # the first is the furniture, the second its room; build_tree turns them into room stats.
+        furn_rows = []
+        try:
+            for _k, blob in db.execute("select key, data from furniture"):
+                runs = re.findall(rb"[A-Za-z_][A-Za-z0-9_]{2,}", blob)
+                if len(runs) >= 2: furn_rows.append((runs[0].decode("ascii"), runs[1].decode("ascii")))
+            furniture = len(furn_rows)
+        except sqlite3.Error:
+            furniture, furn_rows = None, []
     finally:
         db.close()
     # pedigree: Abseil swiss table. header {i64 ?, i64 size, i64 capacity-1},
@@ -129,4 +138,5 @@ def read_save(path):
         c["coi"] = f
         c["room"] = house.get(k)
         c["status"] = "house" if k in house else ("dead" if c["dead"] else "gone")
-    return {"cats": cats, "day": props.get("current_day"), "errors": errors, "props": props, "furniture": furniture}
+    return {"cats": cats, "day": props.get("current_day"), "errors": errors, "props": props,
+            "furniture": furniture, "furn_rows": furn_rows}
