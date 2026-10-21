@@ -116,6 +116,12 @@ def parse_gon(text):
     return obj(None)
 
 
+def _stat(v):
+    """A GON stat value ("2", "-1") as an int; anything else counts as 0."""
+    v = str(v if v is not None else "")
+    return int(v) if v.lstrip("-").isdigit() else 0
+
+
 def clean(s, rich=False):
     """Game text without its markup. rich: [img:str] stays as the marker \x02str\x02, which the page
     turns into the game's glyph; otherwise it becomes the word STR."""
@@ -200,6 +206,18 @@ class GameText:
         """Class gear the cat is born into and cannot take off (ButcherHook, MonkFist...)."""
         return (self.items.get(k) or {}).get("sticky") == "true"
 
+    def item_mods(self, k):
+        """Stat modifiers a worn item carries, as [str,dex,con,int,spd,cha,lck]. The breeding
+        compatibility formula uses the cat's TOTAL charisma, equipment included."""
+        b = self.items.get(k) or {}
+        return [_stat(b.get(s)) for s in mewsave.STATS]
+
+    def mutation_mods(self, part, idx):
+        """Stat modifiers a body-part mutation carries (birth defects included), same order."""
+        if idx < 300: return [0] * 7
+        b = (self.mut.get(MUT_FILE[part]) or {}).get(idx) or {}
+        return [_stat(b.get(s)) for s in mewsave.STATS]
+
     def npc_names(self):
         """Status flag bit -> who the cat was given to, in the game's language."""
         keys = {11: ("NPC_NAME_BEANIES", "Доктор Бинис", "Dr. Beanies"), 12: ("NPC_NAME_BUTCH", "Бутч", "Butch"),
@@ -240,6 +258,50 @@ def cat_faces(gpak):
         except Exception as e:
             _faces[key] = (None, str(e) or type(e).__name__)
     return _faces[key]
+
+
+FURN_STATS = ("Appeal", "Comfort", "Stimulation", "Health", "Mutation", "BreedSuppression")
+_furn = {}
+
+
+def furniture_stats(gpak):
+    """{furniture key: {stat: delta}} from data/furniture_effects.gon. The save's furniture table
+    names the pieces by exactly these keys, so a room's stats are the sum over what stands in it —
+    which is what the game feeds into breeding (Stimulation: how surely the better parent is taken;
+    Comfort: whether the pair rolls at all)."""
+    key = str(gpak) if gpak else None
+    if key not in _furn:
+        out = {}
+        try:
+            raw = read_gpak(gpak, lambda n: n == "data/furniture_effects.gon")["data/furniture_effects.gon"]
+            for k, v in parse_gon(raw.decode("utf-8", "replace")).items():
+                if not isinstance(v, dict): continue
+                d = {s: _stat(v.get(s)) for s in FURN_STATS}
+                d = {s: n for s, n in d.items() if n}
+                if d: out[k] = d
+        except Exception:
+            out = {}
+        _furn[key] = out
+    return _furn[key]
+
+
+def room_stats(S, gpak, cats):
+    """Per-room house stats from the save's furniture, plus the cats-per-room Comfort penalty.
+    ComfortRaw is the furniture's Comfort before the penalty, so the page can work out what a room
+    would give after a pair is moved in; Suppressed marks a room holding BreedSuppression furniture
+    (the Idol of Chastity), where the game never starts a pairing."""
+    F = furniture_stats(gpak)
+    if not F or not S.get("furn_rows"): return {}
+    rooms = {}
+    for fname, room in S["furn_rows"]:
+        d = rooms.setdefault(room, {})
+        for s, v in (F.get(fname) or {}).items(): d[s] = d.get(s, 0) + v
+    for room, d in rooms.items():
+        d["cats"] = sum(1 for c in cats if c["room"] == room)
+        d["ComfortRaw"] = d.get("Comfort", 0)
+        d["Comfort"] = d["ComfortRaw"] - max(0, d["cats"] - 4)   # the game: -1 per cat over four
+        d["Suppressed"] = d.get("BreedSuppression", 0) > 0
+    return rooms
 
 
 _fonts = {}
@@ -298,15 +360,18 @@ def build_save(save_path, gpak=None):
         for k, tier in c["passives"]:
             key = f"p:{k}:{tier}"; lib.setdefault(key, list(G.passive(k, tier))); pas.append(key)
             lib_en.setdefault(key, list(G.in_en(G.passive, k, tier))[:2])
+        mods = [0] * 7                  # stat modifiers outside base/levelling: gear + mutations
         items = []
         for k in c["items"]:
             lib.setdefault("i:" + k, list(G.item(k)) + [False, G.sticky(k)]); items.append("i:" + k)
             lib_en.setdefault("i:" + k, list(G.in_en(G.item, k)))
+            for i, v in enumerate(G.item_mods(k)): mods[i] += v
         muts = {}
         for part, idx in c["parts"].items():
             if idx >= 300 or idx == -2:
                 slot = SLOT[part]
                 if (slot, idx) in muts: continue
+                for i, v in enumerate(G.mutation_mods(part, idx)): mods[i] += v   # one mutation per part group
                 n, d, defect = G.mutation(part, idx)
                 ne, de, _ = G.in_en(G.mutation, part, idx)
                 muts[(slot, idx)] = [slot, idx, n, d, bool(defect or idx == -2), ne, de]
@@ -331,6 +396,7 @@ def build_save(save_path, gpak=None):
             "fl": c["flags"] & 0xFFFFFF, "sx": round(c["sexuality"], 3), "lib": round(c["libido"], 3),
             "agg": round(c["aggression"], 3), "lover": c["lover"] if c["lover"] >= 0 else None,
             "hater": c["hater"] if c["hater"] >= 0 else None,
+            "fa": round(c["lover_aff"], 3), "fer": round(c["fertility"], 4), "mod": mods,   # breeding advice
         })
     owner = (S.get("props") or {}).get("owner_steamid") or Path(save_path).resolve().parent.parent.name
     ico = {}                         # lib key -> the game's icon [viewBox, markup]
@@ -352,6 +418,7 @@ def build_save(save_path, gpak=None):
         if ic: ico[key] = ic
     return {"ico": ico, "libEn": lib_en, "day": S["day"], "save": Path(save_path).name, "saveKey": f"{owner}/{Path(save_path).name}",
             "built": time.strftime("%Y-%m-%d %H:%M"), "lib": lib, "cats": out, "parseErrors": len(S["errors"]),
+            "rooms": room_stats(S, gpak, out),
             "faces": sum(1 for c in out if c["face"]), "facesErr": faces_err, "fun": colony_numbers(S)}
 
 

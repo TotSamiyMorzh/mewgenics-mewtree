@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Suggested pairs.** A new "Подобрать пары / Suggest pairs" button ranks the pairings the game
+  would accept, using the game's own breeding numbers: compatibility (the initiator's total
+  charisma × the partner's libido × lover affinity × sexuality, anything under 5% turned down),
+  stat inheritance biased towards the better parent by the room's Stimulation, active and passive
+  ability odds with their guaranteed thresholds, Skill Share+, inbreeding, birth defects and
+  disorders.
+- **Room recommendation.** Cats can be moved between rooms, so every pair is also given the room
+  that suits it best: the highest Stimulation whose Comfort stays workable once the pair moves in
+  (Comfort at −10 or less fails the rolls outright, and rooms holding BreedSuppression furniture
+  — the Idol of Chastity — never breed at all). Each room's Stimulation and Comfort are summed
+  from the furniture standing in it in the save.
+- Gear and mutation stat modifiers are now exported, so compatibility uses the cat's total
+  charisma rather than its base value.
+
 ## 1.0.0 — 2026-10-08
 
 First public release. Tested on Mewgenics 1.1.

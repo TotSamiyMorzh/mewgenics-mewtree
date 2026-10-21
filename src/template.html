@@ -192,6 +192,25 @@ h3{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color
 .top button{display:flex;justify-content:space-between;gap:10px;text-align:left}
 .top button span{color:#55484d;font:12px var(--mono)}
 .warnbox{border:1px dashed var(--accent);color:var(--accent);border-radius:7px;padding:8px 10px;font-size:12px;line-height:1.45;margin-top:12px}
+.tag.mut{color:var(--mut)}
+/* breeding advice: a stack of ranked pair cards */
+.sugg{display:block;width:100%;text-align:left;background:var(--bg);border:2px solid var(--ink);border-radius:9px;padding:8px 9px;margin:0 0 7px;cursor:pointer;color:var(--fg);font:inherit}
+.sugg:hover{background:var(--surface2)}
+.sugg .sh{display:flex;align-items:center;gap:8px}
+.sugg .sh>svg{width:44px;height:44px;flex:0 0 auto;background:var(--paper);border:2px solid var(--ink);border-radius:8px}
+.sugg .who{flex:1;min-width:0}
+.sugg .who b{display:block;font-size:13px;overflow-wrap:anywhere}
+.sugg .who small{display:block;font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.sugg .sc{flex:0 0 auto;text-align:center;font:700 19px var(--mono);color:var(--accent);line-height:1}
+.sugg .sc small{display:block;font:600 9px var(--mono);color:var(--muted);letter-spacing:.06em}
+.sugg .nums{display:flex;flex-wrap:wrap;gap:3px 12px;margin-top:6px;font:11px var(--mono);color:var(--muted)}
+.sugg .nums b{color:var(--fg)}
+.sugg .bar{height:5px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-top:6px}
+.sugg .bar b{display:block;height:100%;background:var(--accent)}
+.sugg .why{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+.suggbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+.suggbar label{display:flex;gap:6px;align-items:center;font:12px var(--body);color:var(--muted);cursor:pointer}
+.suggbar select{font:700 12px var(--body);color:var(--ink);background:var(--paper);border:2px solid var(--ink);border-radius:8px;padding:2px 6px;cursor:pointer}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -212,6 +231,7 @@ h3{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color
         <button data-mode="line" aria-pressed="false" id="lineBtn" hidden></button>
       </div>
       <button id="pairBtn" aria-pressed="false" data-en="Compare a pair">Сравнить пару</button>
+      <button id="suggBtn" aria-pressed="false" data-en="Suggest pairs">Подобрать пары</button>
       <button id="deadBtn" aria-pressed="false" data-en="Dim the departed">Приглушить ушедших</button>
       <button id="fitBtn" data-en="Fit">Вписать</button>
       <button id="funBtn" aria-pressed="false" data-en="Fun stats">Приколы</button>
@@ -419,6 +439,154 @@ function nodeSub(c,y){const g=(I,x,k,sz=12)=>`<svg class="ic ${k}" x="${x}" y="$
 // would x go for y? straight: the other sex, gay: the same sex, bi: anyone ("?" sex and unknown orientation: no objection)
 const fancies=(x,y)=>x.sx==null||x.sex===2||y.sex===2||(x.sx<.1?x.sex!==y.sex:x.sx>.9?x.sex===y.sex:true);
 
+// ---------- breeding advice: rank the pairings the game would accept ----------
+// Numbers follow the game (the Breeding page). Compatibility = 15% × the initiator's TOTAL
+// charisma × the partner's libido × lover multiplier × sexuality multiplier; under 5% the game
+// rejects the pair (a male–female pair counts the male as the initiator). A kitten takes ONE
+// parent's base value per stat, the room's Stimulation biasing it to the higher one with
+// P = (100 + Stim) / (200 + Stim); gear, collars and mutations never pass down. Active and passive
+// abilities pass by the room's Stimulation too (first active guaranteed at 32, passive at 95), and
+// Skill Share+ guarantees the parent's other passive. Past 5% kinship a kitten can inherit birth
+// defects (1.5 × inbreeding) and past 20% inbreeding disorders. Stimulation and Comfort are read
+// from the furniture standing in the room (see build_tree), so the advice reflects that room's night.
+// Cats can be moved between rooms, so every pair is scored in the room that would suit it best: the
+// highest Stimulation whose Comfort stays workable after the pair moves in (Comfort at −10 or less
+// makes the rolls fail outright, and BreedSuppression furniture — the Idol of Chastity — never breeds).
+const ROOMS=DATA.rooms||{};
+const roomList=Object.keys(ROOMS);
+const pBetter=S=>(100+S)/(200+S);                           // chance the higher parent is taken, per stat
+const spell1=S=>Math.min(1,0.20+0.025*S);                   // first active ability, guaranteed at 32
+const spell2=S=>Math.min(1,0.02+0.005*S);                   // second active ability, guaranteed at 196
+const passiveOdds=S=>Math.min(1,0.05+0.01*S);               // the one passive, guaranteed at 95
+const statTotal=c=>c.base.map((v,i)=>v+c.bonus[i]+(c.mod?c.mod[i]:0));
+const canBreed=(a,b)=>a.sex!==b.sex||a.sex===2||b.sex===2;               // same sex makes no kitten
+const isKitten=c=>c.born>=0&&DATA.day!=null&&(DATA.day-c.born)<2;        // the game: age 1 is a kitten
+function roomComfort(r,add){                                // Comfort after 'add' cats move in (−1 per cat over four)
+  const d=ROOMS[r]||{};return (d.ComfortRaw||0)-Math.max(0,(d.cats||0)+add-4)}
+function roomScore(a,b,r,attMain){                          // how good this room is for the pair (its share of the score)
+  if(ROOMS[r].Suppressed)return null;                       // the game never starts a pair there
+  const add=(a.room===r?0:1)+(b.room===r?0:1);              // how many of the two arrive from elsewhere
+  const comfort=roomComfort(r,add);
+  if(comfort<=-10)return null;                              // Comfort this low: the rolls fail outright
+  const stim=Math.max(0,ROOMS[r].Stimulation||0), pb=pBetter(stim);
+  const exp=a.base.reduce((s,v,i)=>s+pb*Math.max(v,b.base[i])+(1-pb)*Math.min(v,b.base[i]),0);
+  const abilityS=(spell1(stim)+passiveOdds(stim))/2;
+  const night=Math.min(1,attMain*Math.sqrt(1+0.1*comfort));  // the night's roll chance (compatibility × √(1+0.1×Comfort))
+  return{room:r,stim,comfort,add,pb,exp,abilityS,night,util:0.26*(exp/49)+0.06*abilityS+0.07*night};
+}
+function bestRoom(a,b,attMain){                             // the room to put this pair in
+  let best=null;
+  for(const r of roomList){const cand=roomScore(a,b,r,attMain);if(cand&&(!best||cand.util>best.util))best=cand}
+  return best||{room:a.room,stim:Math.max(0,(ROOMS[a.room]||{}).Stimulation||0),comfort:roomComfort(a.room,0),add:0,pb:pBetter(0),stuck:true};
+}
+function compat(x,y){                                   // x is the initiator, y the partner
+  if(!x||!y)return 0;
+  const cha=statTotal(x)[5];                            // total charisma, gear and mutations included
+  const lib=y.lib==null?0.5:y.lib;
+  let lm=1;
+  if(y.lover!=null)lm=y.lover===x.id?1+(y.fa||0):1-(y.fa||0);            // the partner's lover affinity
+  let sm=1;
+  if(x.sex!==2&&y.sex!==2){const s=y.sx==null?0.5:y.sx;                  // the partner's sexuality
+    sm=x.sex!==y.sex?Math.cos(Math.PI/2*s):Math.sin(Math.PI/2*s)}
+  return Math.max(0,0.15*cha*lib*lm*sm)}
+function pairAttract(a,b){
+  if(a.sex!==b.sex&&a.sex!==2&&b.sex!==2){                                 // male–female: the male leads
+    const m=a.sex===0?a:b,f=a.sex===0?b:a;
+    return{main:compat(m,f),rev:compat(f,m)}}
+  const x=compat(a,b),y=compat(b,a);
+  return{main:Math.max(x,y),rev:Math.min(x,y)}}
+function pairInfo(a,b){
+  const coi=kin(a.id,b.id),att=pairAttract(a,b),sameRoom=a.room===b.room;
+  const R=bestRoom(a,b,att.main);                                         // the room to put them in
+  const S=R.stim, pb=R.pb;
+  const potTot=a.base.reduce((s,v,i)=>s+Math.max(v,b.base[i]),0);         // best the kitten can inherit
+  const expTot=a.base.reduce((s,v,i)=>s+pb*Math.max(v,b.base[i])+(1-pb)*Math.min(v,b.base[i]),0);
+  const all7=Math.pow(pb,7);                                             // every stat takes the higher parent
+  const comfort=R.comfort;
+  const twin=(a.fer!=null&&b.fer!=null)?Math.max(0,a.fer*b.fer-1):null;  // combined fertility − 1
+  const dis=c=>c.pas.filter(k=>L(k)[2]).length, def=c=>c.mut.filter(m=>m[4]).length;
+  const slots=c=>new Set(c.mut.filter(m=>!m[4]).map(m=>m[0]));
+  const sa=slots(a),sb=slots(b),shared=[...sa].filter(s=>sb.has(s));
+  const skill=[a,b].filter(c=>c.pas.some(k=>k.split(':')[1]==='SkillShare'&&k.split(':')[2]==='2')).length;  // Skill Share+ only
+  const pDis=Math.max(0.02,0.4*coi-0.06), pParts=coi>0.05?Math.min(1,1.5*coi):0;
+  const coiRisk=Math.min(1,pDis+pParts);
+  const night=R.night!=null?R.night:(comfort>-10?Math.min(1,att.main*Math.sqrt(1+0.1*comfort)):0); // the night's roll chance
+  const attS=Math.min(1,att.main), statS=expTot/49;                      // 49 = seven 7s, the ceiling
+  const safeS=1-Math.min(1,Math.max(0,(coi-0.03)/0.22));                 // clean until ~3%, sunk by ~25%
+  const abilityS=(spell1(S)+passiveOdds(S))/2;                           // how surely abilities pass here
+  const score=100*(0.26*attS+0.26*statS+0.20*safeS+0.09*(1-coiRisk)+0.06*abilityS+0.07*night
+                  +0.03*Math.min(1,shared.length/2)+0.03*(twin!=null?Math.min(1,twin/0.5625):0));
+  return{a,b,coi,att,potTot,expTot,twin,disA:dis(a),disB:dis(b),defA:def(a),defB:def(b),
+         shared,skill,pDis,pParts,coiRisk,sameRoom,S,pb,all7,comfort,sp1:spell1(S),sp2:spell2(S),
+         po:passiveOdds(S),rec:R.room,recAdd:R.add,recStuck:!!R.stuck,night,score}}
+let suggMode=false,suggSort='score',suggSame=false,suggList=[];
+function buildSugg(){
+  const pool=all.filter(c=>c.st==='house'&&!isKitten(c)),out=[];
+  for(let i=0;i<pool.length;i++)for(let j=i+1;j<pool.length;j++){
+    const a=pool[i],b=pool[j];
+    if(!canBreed(a,b))continue;
+    const p=pairInfo(a,b);
+    if(p.att.main<0.05)continue;                        // the game turns anything under 5% down
+    if(suggSame&&!p.sameRoom)continue;                  // only cats in one room ever meet
+    out.push(p)}
+  out.sort(suggSort==='coi'?(p,q)=>p.coi-q.coi||q.score-p.score
+    :suggSort==='stats'?(p,q)=>q.expTot-p.expTot||p.coi-q.coi
+    :suggSort==='att'?(p,q)=>q.att.main-p.att.main||p.coi-q.coi
+    :(p,q)=>q.score-p.score);
+  suggList=out.slice(0,40);return out.length}
+function renderSugg(){
+  const total=buildSugg();
+  const opts=[['score',tr('Лучшая пара в целом','Best overall')],['coi',tr('Самые чистые (инбридинг)','Cleanest (inbreeding)')],
+    ['stats',tr('Лучшие статы котёнку','Best kitten stats')],['att',tr('Сильнее всего хотят','Most willing')]];
+  const head=`<h3 style="margin-top:0">${tr('Подбор пар','Suggested pairs')}</h3>
+    <div class="suggbar"><select id="suggSort" aria-label="${tr('Как сортировать','How to sort')}">${opts.map(([v,t])=>`<option value="${v}"${v===suggSort?' selected':''}>${esc(t)}</option>`).join('')}</select>
+    <label><input type="checkbox" id="suggSame"${suggSame?' checked':''}>${tr('только уже вместе','already together only')}</label></div>`;
+  if(!suggList.length){
+    panel.innerHTML=head+`<p class="hint">${tr('Игра не приняла бы ни одной пары: нужны двое взрослых котов разного пола (или с полом «?») с совместимостью от 5%.','The game would turn down every pair: it needs two adults of different sex (or a “?” cat) at 5% compatibility or more.')}</p>`;
+    wireSugg();return}
+  panel.innerHTML=head+suggList.map(p=>{
+    const a=p.a,b=p.b;
+    const recName=ROOM_RU[p.rec]??p.rec;
+    const needMove=p.recAdd>0;
+    const why=[];
+    why.push(p.att.main>=.25?`<span class="tag alive">${tr('сильно тянутся','keen on each other')}</span>`
+      :p.att.main>=.10?`<span class="tag">${tr('понравятся','would go for it')}</span>`
+      :`<span class="tag warn">${tr('еле согласятся','barely willing')}</span>`);
+    if(p.coi>.125)why.push(`<span class="tag bad">${tr('сильный инбридинг','badly inbred')}</span>`);
+    else if(p.coi===0)why.push(`<span class="tag alive">${tr('не родня','unrelated')}</span>`);
+    if(p.shared.length)why.push(`<span class="tag mut">${tr('общая мутация: ','shared mutation: ')}${esc(SLOT_RU[p.shared[0]]||p.shared[0])}</span>`);
+    if(p.skill)why.push(`<span class="tag">${tr('Skill Share+: пассивка гарантирована','Skill Share+: passive guaranteed')}</span>`);
+    if(p.defA+p.defB)why.push(`<span class="tag bad">${tr('у родителей дефекты','parents carry defects')}</span>`);
+    if(p.disA+p.disB)why.push(`<span class="tag warn">${tr('у родителей расстройства','parents carry disorders')}</span>`);
+    if(p.recStuck)why.push(`<span class="tag bad">${tr('нет подходящей комнаты','no room suits them')}</span>`);
+    else if(needMove)why.push(`<span class="tag">${tr('свести в ','bring together in ')}${esc(recName)}</span>`);
+    else why.push(`<span class="tag alive">${tr('уже в лучшей комнате','already in the best room')}</span>`);
+    return`<button class="sugg" data-pair="${a.id}_${b.id}">
+      <div class="sh"><svg viewBox="0 0 64 64" aria-hidden="true">${catIcon(a)}</svg><svg viewBox="0 0 64 64" aria-hidden="true">${catIcon(b)}</svg>
+        <div class="who"><b>${esc(a.n)} × ${esc(b.n)}</b><small>${needMove?`${tr('переместить в','move to')} ${esc(recName)}`:`${tr('комната','room')} ${esc(recName)}`}${p.sameRoom?'':' · '+tr('сейчас','now')+' '+esc(ROOM_RU[a.room]??a.room)+' / '+esc(ROOM_RU[b.room]??b.room)}</small></div>
+        <div class="sc">${Math.round(p.score)}<small>${tr('ОЦЕНКА','SCORE')}</small></div></div>
+      <div class="bar"><b style="width:${Math.round(Math.min(1,p.night)*100)}%"></b></div>
+      <div class="nums"><span>${tr('тяга','attraction')} <b>${(p.att.main*100).toFixed(0)}%</b></span>
+        <span>${tr('инбридинг','inbreeding')} <b style="color:${coiColor(p.coi)}">${(p.coi*100).toFixed(1)}%</b></span>
+        <span>${tr('статы котёнку','kitten stats')} <b>${p.expTot.toFixed(1)}–${p.potTot}</b></span>
+        <span title="${tr('шанс, что пара сойдётся за ночь: совместимость с поправкой на уют','chance the pair gets together in a night: compatibility adjusted for Comfort')}">${tr('за ночь','a night')} <b>${Math.round(p.night*100)}%</b></span>
+        <span title="${tr('стимуляция комнаты: как уверенно котёнок берёт высший стат','room Stimulation: how surely the kitten takes the higher stat')}">${tr('стим','stim')} <b>${p.S}</b></span>
+        <span title="${tr('уют комнаты после переезда; при −10 и ниже игра не начнёт','room Comfort after the move; at −10 or less the game will not start')}">${tr('уют','comfort')} <b>${p.comfort}</b></span>
+        ${p.twin!=null?`<span>${tr('двойня','twins')} <b>${Math.round(p.twin*100)}%</b></span>`:''}</div>
+      <div class="why">${why.join('')}
+        ${p.sp1>=1?`<span class="tag alive">${tr('1-я активка гарантирована','1st active guaranteed')}</span>`:''}
+        ${p.po>=1?`<span class="tag alive">${tr('пассивка гарантирована','passive guaranteed')}</span>`:''}
+        ${p.sp1<1?`<span class="tag">${tr('1-я активка ','1st active ')}${Math.round(p.sp1*100)}%</span>`:''}
+        ${p.po<1?`<span class="tag">${tr('пассивка ','passive ')}${Math.round(p.po*100)}%</span>`:''}</div></button>`}).join('')
+    +(total>suggList.length?`<p class="hint">${tr('Показаны лучшие ','Showing the best ')}${suggList.length}${tr(' из ',' of ')}${total}${tr('. Остальные пары можно посмотреть в сравнении.','. Compare the rest by hand.')}</p>`:'')
+    +`<p class="hint">${tr('Тяга — совместимость из самой игры (харизма × либидо × возлюбленный × ориентация); ниже 5% игра пару отвергает. Котов можно переставлять, поэтому для каждой пары подобрана комната: самая высокая стимуляция, где уют после переезда не падает до −10 (там игра не начнёт; мебель «идол целомудрия» вообще не размножает). Статы — от ожидаемых к лучшим, котёнок берёт высший стат с шансом (100+стим)/(200+стим); стим 32 гарантирует активку, 95 — пассивку. Клик по паре открывает подробное сравнение.','Attraction is the game’s own compatibility (charisma × libido × lover × sexuality); under 5% the game turns the pair down. Cats can be moved, so each pair is given a room: the highest Stimulation whose Comfort stays above −10 after the move (below that the game will not start; BreedSuppression furniture never breeds at all). Stats are the expected-to-best range: the kitten takes the higher value with chance (100+stim)/(200+stim); stim 32 guarantees an active ability, 95 a passive. Click a pair for the full comparison.')}</p>`;
+  wireSugg()}
+function wireSugg(){
+  const s=document.getElementById('suggSort');
+  if(s)s.onchange=()=>{suggSort=s.value;renderSugg()};
+  const k=document.getElementById('suggSame');
+  if(k)k.onchange=()=>{suggSame=k.checked;renderSugg()}}
+
 // ---------- state ----------
 let mode='house',focus=null,sel=null,pairMode=false,pick=[],muteGone=false,shown=new Set(),nodeEls={},edgeEls=[];
 const svg=document.getElementById('stage'),world=document.getElementById('world'),edgesG=document.getElementById('edges'),nodesG=document.getElementById('nodes'),panel=document.getElementById('panel');
@@ -575,9 +743,11 @@ function colonyPanel(){
   <p class="hint" style="margin-top:14px">${tr('Тыкни на кота: подсвечу всю его линию вверх и вниз и покажу спеллы, пассивки, мутации и статы. Колесо или щипок для зума.','Click a cat: its whole line up and down lights up, and you get its abilities, passives, mutations and stats. Wheel or pinch to zoom.')}</p>
   ${DATA.texts?'':`<div class="warnbox">${tr('Игра не найдена: названия показаны по ключам игры, без описаний и картинок.','The game was not found: names are shown by their internal keys, with no descriptions and no art.')}</div>`}`}
 function renderPanel(){
+  if(suggMode){renderSugg();return}
   if(pairMode){
     if(pick.length<2){panel.innerHTML=`<h3 style="margin-top:0">${tr('Сравнение пары','Compare a pair')}</h3><p class="hint">${tr('Выбери двух котов. Покажу общих предков и инбридинг котёнка по Райту (так же считает игра).','Pick two cats. You get their common ancestors and the kitten\'s inbreeding by Wright\'s formula (the way the game counts it).')}</p>${pick.length?`<p>${tr('Первый','First')}: <b>${esc(cats[pick[0]].n)}</b></p>`:''}`;return}
     const [a,b]=pick.map(id=>cats[id]);const k=kin(a.id,b.id);const A=anc(a.id),B=anc(b.id);const cm=[...A].filter(x=>B.has(x));
+    const pi=pairInfo(a,b);
     const v=k>=.125?['bad',tr('Высокий риск дефектов','High risk of defects'),'blood']:k>=.03?['warn',tr('Терпимо, но следи','Tolerable, keep an eye on it'),'accent']:['alive',tr('Чистая пара','Clean pair'),'mut'];
     const sexWarn=(a.sex===b.sex&&a.sex!==2)?`<div class="warnbox">${tr('Один пол: котят не будет.','Same sex: no kittens.')}</div>`:'';
     const deadWarn=[a,b].filter(c=>c.st!=='house').map(c=>`<div class="warnbox">${esc(c.n)} ${tr('не в доме.','is not at home.')}</div>`).join('');
@@ -588,7 +758,19 @@ function renderPanel(){
       <h3>${tr('Инбридинг котёнка','Kitten\'s inbreeding')}</h3><div class="meter" style="color:var(--${v[2]})">${(k*100).toFixed(1)}%</div><span class="tag ${v[0]}">${v[1]}</span>
       <h3>${tr('Общие предки','Common ancestors')} · ${cm.length}</h3><div class="links">${cm.length?cm.map(linkBtn).join(''):`<span class="hint">${tr('Не родня','Not related')}</span>`}</div>
       <h3>${tr('Базовые статы котёнка','Kitten\'s base stats')}</h3><p class="hint" style="margin:0 0 6px">${tr('Каждый стат берётся от одного из родителей.','Each stat comes from one of the parents.')}</p>
-      <div class="stats">${STATN.map((s,i)=>{const lo=Math.min(a.base[i],b.base[i]),hi=Math.max(a.base[i],b.base[i]);return`${statLbl(i)}<div class="bar"><span style="width:${lo*10}%"></span><b style="width:${Math.max(3,(hi-lo)*10)}%"></b></div><span>${lo===hi?lo:lo+'/'+hi}</span>`}).join('')}</div>`;
+      <div class="stats">${STATN.map((s,i)=>{const lo=Math.min(a.base[i],b.base[i]),hi=Math.max(a.base[i],b.base[i]);return`${statLbl(i)}<div class="bar"><span style="width:${lo*10}%"></span><b style="width:${Math.max(3,(hi-lo)*10)}%"></b></div><span>${lo===hi?lo:lo+'/'+hi}</span>`}).join('')}</div>
+      <h3>${tr('Что выйдет','What the kitten gets')}${pi.rec?' · '+esc(ROOM_RU[pi.rec]??pi.rec):''}</h3><p class="hint" style="margin:0 0 6px">${pi.recAdd>0?tr(`Котов надо свести в эту комнату — котов можно переставлять. Котёнок берёт высший стат с шансом (100+стим)/(200+стим).`,`Move the pair into this room — cats can be moved freely. The kitten takes the higher stat with chance (100+stim)/(200+stim).`):tr('Котёнок берёт высший стат с шансом (100+стим)/(200+стим). Стим и уют считаны из мебели в комнате.','The kitten takes the higher stat with chance (100+stim)/(200+stim). Stim and Comfort are read from the furniture in the room.')}</p>
+      <div class="recs">
+        <div class="rec"><b>${pi.expTot.toFixed(1)}–${pi.potTot}</b><span>${tr('статы котёнку','kitten stats')}</span></div>
+        <div class="rec"><b>${pi.S}</b><span>${tr('стимуляция','stimulation')}</span></div>
+        <div class="rec"><b>${pi.comfort}</b><span>${tr('уют','comfort')}</span></div>
+        <div class="rec"><b>${Math.round(pi.night*100)}%</b><span>${tr('за ночь','a night')}</span></div>
+        <div class="rec"><b>${(pi.all7*100).toFixed(0)}%</b><span>${tr('все семь высших','all seven higher')}</span></div>
+        <div class="rec"><b>${Math.round(pi.sp1*100)}%</b><span>${tr('1-я активка','1st active')}</span></div>
+        <div class="rec"><b>${Math.round(pi.po*100)}%</b><span>${tr('пассивка','passive')}</span></div>
+        ${pi.twin!=null?`<div class="rec"><b>${Math.round(pi.twin*100)}%</b><span>${tr('двойня','twins')}</span></div>`:''}
+        ${pi.skill?`<div class="rec"><b>✓</b><span>${tr('Skill Share+: пассивка гарантирована','Skill Share+: passive guaranteed')}</span></div>`:''}
+      </div>${pi.recStuck?`<div class="warnbox">${tr('Ни одна комната не подходит: уют везде слишком низкий или стоит «идол целомудрия».','No room works: Comfort is too low everywhere, or an Idol of Chastity is in the way.')}</div>`:''}`;
     return}
   if(sel==null){panel.innerHTML=(mode==='fav'&&!shown.size?`<div class="warnbox" style="margin:0 0 14px">${tr('Избранных пока нет. Открой кота и нажми «☆ В избранное».','No favourites yet. Open a cat and press “☆ Favourite”.')}</div>`:'')+colonyPanel();return}
   const c=cats[sel];const age=ageOf(c);
@@ -617,7 +799,8 @@ function renderPanel(){
     <h3>${tr('Котята','Kittens')} · ${c.kids.length}</h3><div class="links">${c.kids.length?c.kids.map(linkBtn).join(''):`<span class="hint">${tr('Нет','None')}</span>`}</div>
     ${shown.has(c.id)?'':`<div class="warnbox">${tr('Этого кота нет на графе в текущем режиме.','This cat is not on the graph in the current view.')}</div>`}`;
 }
-panel.addEventListener('click',e=>{const z=e.target.closest('[data-zoom]');if(z){zoomCat(cats[+z.dataset.zoom]);return}
+panel.addEventListener('click',e=>{const pr=e.target.closest('[data-pair]');if(pr){const ids=pr.dataset.pair.split('_').map(Number);suggMode=false;document.getElementById('suggBtn').setAttribute('aria-pressed',false);pairMode=true;pick=ids;document.getElementById('pairBtn').setAttribute('aria-pressed',true);apply();return}
+  const z=e.target.closest('[data-zoom]');if(z){zoomCat(cats[+z.dataset.zoom]);return}
   const fv=e.target.closest('[data-fav]');if(fv){toggleFav(+fv.dataset.fav);return}
   const pt=e.target.closest('[data-pet]');if(pt){setPet(+pt.dataset.pet);return}
   const ln=e.target.closest('[data-line]');if(ln){const id=+ln.dataset.line;if(mode==='line'&&focus===id){setMode('fam');center(id)}else{focus=id;sel=id;setMode('line')}return}
@@ -646,11 +829,13 @@ svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
 nodesG.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tapNode(+e.target.closest('.node').dataset.id)}});
 
 function tapNode(id){if(pairMode){const i=pick.indexOf(id);if(i>=0)pick.splice(i,1);else{if(pick.length===2)pick.shift();pick.push(id)}apply()}else{sel=id;apply()}}
-function go(id){if(!shown.has(id)){setMode('fam');if(!shown.has(id))setMode('all')}sel=id;apply();center(id)}
-function togglePair(){pairMode=!pairMode;pick=pairMode&&sel!=null?[sel]:[];document.getElementById('pairBtn').setAttribute('aria-pressed',pairMode);apply()}
+function go(id){if(suggMode){suggMode=false;document.getElementById('suggBtn').setAttribute('aria-pressed',false)}if(!shown.has(id)){setMode('fam');if(!shown.has(id))setMode('all')}sel=id;apply();center(id)}
+function togglePair(){pairMode=!pairMode;pick=pairMode&&sel!=null?[sel]:[];if(pairMode){suggMode=false;document.getElementById('suggBtn').setAttribute('aria-pressed',false)}document.getElementById('pairBtn').setAttribute('aria-pressed',pairMode);apply()}
+function toggleSugg(){suggMode=!suggMode;if(suggMode){pairMode=false;document.getElementById('pairBtn').setAttribute('aria-pressed',false)}document.getElementById('suggBtn').setAttribute('aria-pressed',suggMode);apply()}
 function setMode(m){mode=m;const lb=document.getElementById('lineBtn');lb.hidden=focus==null;if(focus!=null)lb.textContent=tr('Линия: ','Line: ')+cats[focus].n;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===m));layout()}
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
 document.getElementById('pairBtn').onclick=togglePair;
+document.getElementById('suggBtn').onclick=toggleSugg;
 document.getElementById('deadBtn').onclick=e=>{muteGone=!muteGone;e.currentTarget.setAttribute('aria-pressed',muteGone);apply()};
 document.getElementById('fitBtn').onclick=fit;
 document.getElementById('pet').onclick=()=>{if(pet!=null){if(pairMode)togglePair();go(pet)}};
